@@ -1,0 +1,461 @@
+# =============================================================================
+# dashboard_43/night_mode.yaml
+# -----------------------------------------------------------------------------
+# EJSZAKAI MOD + KEPVALTO + BEALLITASOK
+# -----------------------------------------------------------------------------
+# Ez a modul 3 fontos funkcionalitast tartalmaz:
+#
+# 1) EJSZAKAI MOD - Settings oldalrol vagy HA-bol:
+#    - Manualis BE/KI kapcsolas (felulirja az automatikat)
+#    - Automatikus utemezes: HA-bol allithato kezdo es zaro ora (number entitas)
+#    - Ket dizajn: Amber (meleg ambient) es Matrix (digital rain)
+#    - Snooze: erintessel kilephetunk, vissza max 1 ora mulva auto-aktivalodik
+#
+# 2) KEPVALTO (Carousel) - Settings oldalrol bekapcsolhato:
+#    - Automatikusan vatasos vegig az osszes oldalon
+#    - Konfiguralhato idokoz (5-300 sec)
+#    - Csak akkor megy, ha nem vagyunk Settings/Forecast oldalon
+#
+# Ez a modul tartalmazza a KONFIG ENTITASOKAT is (switch / number / select),
+# amik a HA-bol allithatok ES a settings.yaml UI is hivatkozza oket:
+#   - switch:  night_mode_manual, night_mode_auto, auto_carousel_enabled
+#   - select:  night_style (Amber / Matrix)
+#   - number:  carousel_interval, night_start_hour, night_end_hour
+#
+# A BEALLITASOK KEPERNYO (page_settings) maga a settings.yaml-ban van -
+# az csak a UI; a logika es az entitasok itt maradnak.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# GLOBALIS ALLAPOTOK
+# -----------------------------------------------------------------------------
+globals:
+  # Aktiv-e most az ejszakai mod? Az evaluate_night_mode allitja be.
+  - id: is_night_active
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  # Manualis snooze: a felhasznalo kilepett az ejszakai modbol.
+  # Ovkenkent (refresh_clock-bol) automatikusan torlodik (HA on_time `hours: '*'`).
+  - id: night_snooze
+    type: bool
+    restore_value: false
+    initial_value: "false"
+
+  # === KEPVALTO (Carousel) globalok ===
+  # Az aktualis oldalon eltoltott masodperc - amikor eleri az interval-t,
+  # a kovetkezo oldalra valtunk.
+  - id: carousel_tick
+    type: int
+    restore_value: false
+    initial_value: "0"
+  # Aktualis tab index (0-5: Home, Air, Solar, Radar, Lights, Heating)
+  - id: carousel_current_tab
+    type: int
+    restore_value: false
+    initial_value: "0"
+
+  # TRUE = a Settings oldal nyitva (evaluate_night_mode NE valtson oldalt)
+  - id: is_settings_open
+    type: bool
+    restore_value: false
+    initial_value: "false"
+
+# -----------------------------------------------------------------------------
+# SWITCH ENTITASOK (HA-bol is allithato boolean kapcsolok)
+# -----------------------------------------------------------------------------
+# Mindegyik megjelenik a HA-ban "switch.esphome_web_bac910_*" neven.
+# Az `optimistic: true` jelenti, hogy az ESP saja toggle-javal is konzisztens
+# marad az allapot.
+switch:
+  - platform: template
+    name: "Ejszakai mod"
+    id: night_mode_manual
+    icon: "mdi:weather-night"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_on:
+      then:
+        - script.execute: evaluate_night_mode
+        - script.execute: refresh_settings_ui
+    on_turn_off:
+      then:
+        - script.execute: evaluate_night_mode
+        - script.execute: refresh_settings_ui
+  - platform: template
+    name: "Ejszakai mod automata"
+    id: night_mode_auto
+    icon: "mdi:clock-outline"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:
+      then:
+        - script.execute: evaluate_night_mode
+        - script.execute: refresh_settings_ui
+    on_turn_off:
+      then:
+        - script.execute: evaluate_night_mode
+        - script.execute: refresh_settings_ui
+
+  # === AUTOMATA KEPVALTO ===
+  - platform: template
+    name: "Automata kepvalto"
+    id: auto_carousel_enabled
+    icon: "mdi:rotate-3d-variant"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_on:
+      then:
+        - lambda: 'id(carousel_tick) = 0;'
+        - script.execute: refresh_settings_ui
+    on_turn_off:
+      then:
+        - lambda: 'id(carousel_tick) = 0;'
+        - script.execute: refresh_settings_ui
+
+select:
+  - platform: template
+    name: "Ejszakai stilus"
+    id: night_style
+    icon: "mdi:palette"
+    optimistic: true
+    initial_option: "Amber"
+    restore_value: true
+    options: ["Amber", "Matrix"]
+    on_value:
+      then:
+        - script.execute: refresh_settings_ui
+        - if:
+            condition: { lambda: 'return id(is_night_active);' }
+            then:
+              - script.execute: evaluate_night_mode
+
+# === KEPVALTO IDOKOZ (5-300 mp, 5s lepessel) ===
+number:
+  - platform: template
+    name: "Kepvalto idokoz"
+    id: carousel_interval
+    icon: "mdi:timer-outline"
+    optimistic: true
+    min_value: 5
+    max_value: 300
+    step: 5
+    initial_value: 30
+    restore_value: true
+    unit_of_measurement: "s"
+    mode: BOX
+    set_action:
+      then:
+        - lambda: 'id(carousel_tick) = 0;'
+        - script.execute: refresh_settings_ui
+
+  # === EJSZAKAI MOD KEZDO ORA (0-23) ===
+  - platform: template
+    name: "Ejszakai mod kezdete"
+    id: night_start_hour
+    icon: "mdi:weather-night"
+    optimistic: true
+    min_value: 0
+    max_value: 23
+    step: 1
+    initial_value: 23
+    restore_value: true
+    unit_of_measurement: "h"
+    mode: BOX
+    set_action:
+      then:
+        - script.execute: refresh_settings_ui
+        - script.execute: evaluate_night_mode
+
+  # === EJSZAKAI MOD VEGE ORA (0-23) ===
+  - platform: template
+    name: "Ejszakai mod vege"
+    id: night_end_hour
+    icon: "mdi:weather-sunny"
+    optimistic: true
+    min_value: 0
+    max_value: 23
+    step: 1
+    initial_value: 6
+    restore_value: true
+    unit_of_measurement: "h"
+    mode: BOX
+    set_action:
+      then:
+        - script.execute: refresh_settings_ui
+        - script.execute: evaluate_night_mode
+
+interval:
+  - interval: 15s
+    then:
+      - if:
+          condition:
+            lambda: 'return id(is_night_active) && id(night_style).current_option() == "Matrix";'
+          then:
+            - script.execute: matrix_refresh
+
+  # === KEPVALTO TICK CHECK 1 mp-onkent ===
+  - interval: 1s
+    then:
+      - if:
+          condition:
+            and:
+              - switch.is_on: auto_carousel_enabled
+              - lambda: 'return !id(is_night_active);'
+              - lambda: 'return !id(is_settings_open);'
+              - lambda: 'return !id(is_forecast_open);'
+          then:
+            - lambda: 'id(carousel_tick)++;'
+            - if:
+                condition:
+                  lambda: 'return id(carousel_tick) >= (int)id(carousel_interval).state;'
+                then:
+                  - lambda: |-
+                      id(carousel_tick) = 0;
+                      id(carousel_current_tab) = (id(carousel_current_tab) + 1) % 6;
+                  - script.execute:
+                      id: set_tab_active
+                      tab_index: !lambda 'return id(carousel_current_tab);'
+
+script:
+  # ---------------------------------------------------------------------------
+  # EVALUATE_NIGHT_MODE - dontes hogy aktiv-e az ejszakai mod
+  # ---------------------------------------------------------------------------
+  # Hivva: oranként, manualis switch valtaskor, ora number valtaskor,
+  #        boot kor.
+  #
+  # Logika:
+  #   1. Ha snooze aktiv -> mindig NEM (a snooze hours: '*' on_time-on torlodik)
+  #   2. Ha manualis switch BE -> mindig IGEN
+  #   3. Ha auto switch BE -> ido alapjan dontes:
+  #      - start > end (pl. 23 -> 6): atmenet ejfelen -> aktiv ha (hour >= 23 || hour < 6)
+  #      - start < end (pl. 1 -> 8):  azonos napon belul -> aktiv ha (hour >= 1 && hour < 8)
+  #      - start == end -> sosem aktiv (kikapcs)
+  #   4. Egyebkent NEM
+  #
+  # Kovetkezmeny:
+  #   - Ha aktivva valtoz, atvalt page_night_amber vagy page_night_matrix-ra
+  #     (de CSAK ha nem Settings/Forecast nyitva)
+  #   - Ha inaktivva valtoz, vissza page_home-ra (szinten csak ha nem Settings/Forecast)
+  - id: evaluate_night_mode
+    then:
+      - lambda: |-
+          bool should_be_night = false;
+          if (!id(night_snooze)) {
+            if (id(night_mode_manual).state) {
+              should_be_night = true;
+            } else if (id(night_mode_auto).state) {
+              auto t = id(ha_time).now();
+              if (t.is_valid()) {
+                int hour = t.hour;
+                int start = (int)id(night_start_hour).state;
+                int end = (int)id(night_end_hour).state;
+                // Atmenet az ejjelt at: pl. 23 -> 6 (start > end)
+                if (start > end) {
+                  if (hour >= start || hour < end) should_be_night = true;
+                }
+                // Azonos napon belul: pl. 1 -> 8 (start < end)
+                else if (start < end) {
+                  if (hour >= start && hour < end) should_be_night = true;
+                }
+                // start == end -> kikapcsolva (nincs aktiv idoszak)
+              }
+            }
+          }
+          id(is_night_active) = should_be_night;
+      - if:
+          condition: { lambda: 'return id(is_night_active);' }
+          then:
+            # Bekapcsolas: csak akkor valt oldalt, ha NEM a settings/forecast van nyitva
+            - if:
+                condition:
+                  and:
+                    - lambda: 'return !id(is_settings_open);'
+                    - lambda: 'return !id(is_forecast_open);'
+                then:
+                  - lvgl.widget.hide: main_tab_bar
+                  - if:
+                      condition: { lambda: 'return id(night_style).current_option() == "Matrix";' }
+                      then:
+                        - lvgl.page.show: page_night_matrix
+                        - script.execute: matrix_refresh
+                      else:
+                        - lvgl.page.show: page_night_amber
+          else:
+            # Kikapcsolas: csak akkor valt vissza home-ra, ha NEM settings/forecast/normal oldalon vagyunk
+            - if:
+                condition:
+                  and:
+                    - lambda: 'return !id(is_settings_open);'
+                    - lambda: 'return !id(is_forecast_open);'
+                then:
+                  - lvgl.widget.show: main_tab_bar
+                  - lvgl.page.show: page_home
+
+  # NOTE: a refresh_settings_ui script + a page_settings UI a settings.yaml-ba
+  # lett kiszervezve (kulon modul a beallitasok kepernyojehez).
+
+  # ---------------------------------------------------------------------------
+  # MATRIX_REFRESH - 15 darab "Matrix digital rain" felirat frissites
+  # ---------------------------------------------------------------------------
+  # Hivva: csak ha Matrix stilus aktiv az ejszakai modban (15s-onkenti interval).
+  # Minden strip random 4-12 hex karakter, fuggolegesen sorbon (newline-okkal).
+  # A Matrix oldalon (page_night_matrix) 15 ilyen strip jelenik meg
+  # (mtx_strip_01 .. mtx_strip_15) kulonbozo poziciokban es szinekben.
+  - id: matrix_refresh
+    then:
+      - lambda: |-
+          static const char hex_chars[] = "0123456789ABCDEF";
+          auto rand_strip = [&](int len) -> std::string {
+            std::string s;
+            s.reserve(len * 2);
+            for (int i = 0; i < len; i++) {
+              if (i > 0) s += '\n';
+              s += hex_chars[random_uint32() % 16];
+            }
+            return s;
+          };
+          lv_label_set_text(id(mtx_strip_01), rand_strip(8).c_str());
+          lv_label_set_text(id(mtx_strip_02), rand_strip(7).c_str());
+          lv_label_set_text(id(mtx_strip_03), rand_strip(10).c_str());
+          lv_label_set_text(id(mtx_strip_04), rand_strip(5).c_str());
+          lv_label_set_text(id(mtx_strip_05), rand_strip(9).c_str());
+          lv_label_set_text(id(mtx_strip_06), rand_strip(4).c_str());
+          lv_label_set_text(id(mtx_strip_07), rand_strip(12).c_str());
+          lv_label_set_text(id(mtx_strip_08), rand_strip(6).c_str());
+          lv_label_set_text(id(mtx_strip_09), rand_strip(8).c_str());
+          lv_label_set_text(id(mtx_strip_10), rand_strip(5).c_str());
+          lv_label_set_text(id(mtx_strip_11), rand_strip(9).c_str());
+          lv_label_set_text(id(mtx_strip_12), rand_strip(7).c_str());
+          lv_label_set_text(id(mtx_strip_13), rand_strip(6).c_str());
+          lv_label_set_text(id(mtx_strip_14), rand_strip(8).c_str());
+          lv_label_set_text(id(mtx_strip_15), rand_strip(5).c_str());
+
+# =============================================================================
+# UI - PAGE_NIGHT_AMBER + PAGE_NIGHT_MATRIX
+# (A page_settings oldal a settings.yaml modulba lett kiszervezve)
+# =============================================================================
+lvgl:
+  pages:
+    # ========================================================================
+    # EJSZAKAI MOD OLDALAK (ket stilus: Amber + Matrix)
+    # Erintessel kilephetunk (snooze) -> vissza home-ra / tab bar megjelenik
+    # ========================================================================
+    - id: page_night_amber
+      bg_color: 0x000000
+      widgets:
+        - arc:
+            id: ui_night_sec_arc
+            align: CENTER
+            width: 360
+            height: 360
+            start_angle: 0
+            end_angle: 360
+            rotation: 270
+            min_value: 0
+            max_value: 60
+            arc_color: 0x110800
+            arc_width: 2
+            indicator: { arc_color: 0x332200, arc_width: 2 }
+        - arc:
+            id: ui_night_min_arc
+            align: CENTER
+            width: 330
+            height: 330
+            start_angle: 0
+            end_angle: 360
+            rotation: 270
+            min_value: 0
+            max_value: 60
+            arc_color: 0x110800
+            arc_width: 4
+            indicator: { arc_color: 0x553300, arc_width: 4 }
+        - arc:
+            id: ui_night_hour_arc
+            align: CENTER
+            width: 290
+            height: 290
+            start_angle: 0
+            end_angle: 360
+            rotation: 270
+            min_value: 0
+            max_value: 24
+            arc_color: 0x110800
+            arc_width: 8
+            indicator: { arc_color: 0x884400, arc_width: 8 }
+        - label: { align: TOP_MID, y: 50, text: "EJSZAKAI MOD", text_font: font_xs, text_color: 0x332200, text_letter_space: 6 }
+        - label: { id: ui_night_amber_time, align: CENTER, y: -20, text: "00:00", text_font: font_mono_mega, text_color: 0x884400 }
+        - label: { id: ui_night_amber_date, align: CENTER, y: 70, text: "----. --. --.", text_font: font_mono_lg, text_color: 0x553300, text_letter_space: 4 }
+        - label: { x: 280, y: 415, text: "BENTI", text_font: font_xs, text_color: 0x553300, text_letter_space: 2 }
+        - label: { id: ui_night_amber_temp, x: 320, y: 412, text: "--°C", text_font: font_mono_md, text_color: 0x664400 }
+        - label: { x: 410, y: 415, text: "PARA", text_font: font_xs, text_color: 0x553300, text_letter_space: 2 }
+        - label: { id: ui_night_amber_hum,  x: 445, y: 412, text: "--%",  text_font: font_mono_md, text_color: 0x664400 }
+        - label: { align: BOTTOM_MID, y: -10, text: "- ERINTSD MEG A FELEBREDESHEZ -", text_font: font_xs, text_color: 0x221100, text_letter_space: 3 }
+        - button:
+            x: 0
+            y: 0
+            width: 800
+            height: 480
+            bg_opa: TRANSP
+            border_width: 0
+            on_click:
+              - lambda: 'id(night_snooze) = true;'
+              - if:
+                  condition: { lambda: 'return id(night_mode_manual).state;' }
+                  then: [ switch.turn_off: night_mode_manual ]
+              - script.execute: { id: set_tab_active, tab_index: 0 }
+              - lvgl.widget.show: main_tab_bar
+    - id: page_night_matrix
+      bg_color: 0x000000
+      widgets:
+        - label: { id: mtx_strip_01, x: 20,  y: 15,  text: "7\nA\n1\nF\n0\n3\nB\n1", text_font: font_mono_sm, text_color: 0x006B30, text_line_space: 0 }
+        - label: { id: mtx_strip_02, x: 50,  y: 80,  text: "0\n8\nF\n2\nA\nD\n0",    text_font: font_mono_sm, text_color: 0x00833A, text_line_space: 0 }
+        - label: { id: mtx_strip_03, x: 80,  y: 15,  text: "C\n5\nB\nF\n2\n1\nA\n7\nE\nF", text_font: font_mono_sm, text_color: 0x006B30, text_line_space: 0 }
+        - label: { id: mtx_strip_04, x: 110, y: 120, text: "2\nA\n9\n1\nB", text_font: font_mono_sm, text_color: 0x00833A, text_line_space: 0 }
+        - label: { id: mtx_strip_05, x: 140, y: 40,  text: "F\n3\nB\n0\nD\n1\nA\nE\n2", text_font: font_mono_sm, text_color: 0x005527, text_line_space: 0 }
+        - label: { id: mtx_strip_06, x: 170, y: 180, text: "5\nF\n8\n1", text_font: font_mono_sm, text_color: 0x9CFFC8, text_line_space: 0 }
+        - label: { id: mtx_strip_07, x: 200, y: 15,  text: "B\n9\nA\n1\nF\nC\n3\n2\n8\nD\n5\nA", text_font: font_mono_sm, text_color: 0x006B30, text_line_space: 0 }
+        - label: { id: mtx_strip_08, x: 230, y: 100, text: "7\nD\n0\nF\n3\nB", text_font: font_mono_sm, text_color: 0x00833A, text_line_space: 0 }
+        - label: { id: mtx_strip_09, x: 510, y: 20,  text: "2\n8\nA\nF\n1\nC\n3\nE", text_font: font_mono_sm, text_color: 0x005527, text_line_space: 0 }
+        - label: { id: mtx_strip_10, x: 540, y: 80,  text: "5\nF\n2\nA\n7", text_font: font_mono_sm, text_color: 0x9CFFC8, text_line_space: 0 }
+        - label: { id: mtx_strip_11, x: 570, y: 160, text: "1\n0\nB\nF\nA\n2\nE\n3\n5", text_font: font_mono_sm, text_color: 0x006B30, text_line_space: 0 }
+        - label: { id: mtx_strip_12, x: 600, y: 30,  text: "D\n7\n3\n8\n1\nF\nC", text_font: font_mono_sm, text_color: 0x00833A, text_line_space: 0 }
+        - label: { id: mtx_strip_13, x: 660, y: 40,  text: "0\nA\nF\n5\n2\nC", text_font: font_mono_sm, text_color: 0x005527, text_line_space: 0 }
+        - label: { id: mtx_strip_14, x: 720, y: 90,  text: "5\nF\nA\n1\nD\nB\n2\n7", text_font: font_mono_sm, text_color: 0x006B30, text_line_space: 0 }
+        - label: { id: mtx_strip_15, x: 750, y: 200, text: "3\nA\nF\n1\n8", text_font: font_mono_sm, text_color: 0x9CFFC8, text_line_space: 0 }
+        - obj:
+            x: 200
+            y: 155
+            width: 400
+            height: 170
+            bg_color: 0x000000
+            bg_opa: 94%
+            border_width: 1
+            border_color: 0x00BB55
+            radius: 4
+            widgets:
+              - obj: { x: 0, y: 0, width: 400, height: 2, bg_color: 0x00BB55, bg_opa: 60%, border_width: 0 }
+              - obj: { x: 0, y: 168, width: 400, height: 2, bg_color: 0x00BB55, bg_opa: 30%, border_width: 0 }
+              - label: { x: 20, y: 18, text: "EJSZAKAI MOD", text_font: font_mono_sm, text_color: 0x005522, text_letter_space: 3 }
+              - label: { x: 320, y: 18, text: "[ MATRIX ]", text_font: font_mono_sm, text_color: 0x005522, text_letter_space: 2 }
+              - label: { id: ui_night_matrix_time, align: CENTER, y: -10, text: "00:00", text_font: font_mono_huge, text_color: 0x00BB55 }
+              - label: { id: ui_night_matrix_date, align: BOTTOM_MID, y: -20, text: "----. --. --.", text_font: font_mono_sm, text_color: 0x006030, text_letter_space: 4 }
+        - label: { x: 280, y: 415, text: "BENTI", text_font: font_mono_sm, text_color: 0x004822, text_letter_space: 2 }
+        - label: { id: ui_night_matrix_temp, x: 320, y: 413, text: "--°C", text_font: font_mono_md, text_color: 0x006B30 }
+        - label: { x: 410, y: 415, text: "PARA", text_font: font_mono_sm, text_color: 0x004822, text_letter_space: 2 }
+        - label: { id: ui_night_matrix_hum,  x: 445, y: 413, text: "--%",  text_font: font_mono_md, text_color: 0x006B30 }
+        - label: { align: BOTTOM_MID, y: -10, text: "- WAKE UP NEO - ERINTSD MEG -", text_font: font_mono_sm, text_color: 0x003318, text_letter_space: 3 }
+        - button:
+            x: 0
+            y: 0
+            width: 800
+            height: 480
+            bg_opa: TRANSP
+            border_width: 0
+            on_click:
+              - lambda: 'id(night_snooze) = true;'
+              - if:
+                  condition: { lambda: 'return id(night_mode_manual).state;' }
+                  then: [ switch.turn_off: night_mode_manual ]
+              - script.execute: { id: set_tab_active, tab_index: 0 }
+              - lvgl.widget.show: main_tab_bar

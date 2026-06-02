@@ -1,0 +1,198 @@
+# =============================================================================
+# dashboard_43/air_quality.yaml
+# -----------------------------------------------------------------------------
+# LEVEGOMINOSEG OLDAL (page_air) - tab bar 1. index
+# -----------------------------------------------------------------------------
+# Tartalom:
+#   - Bal panel: Nagy VOC Index arc (kor) + szoveges allapot (KIVALO / JO /
+#                KOZEPES / ROSSZ / NAGYON ROSSZ / VESZELYES) + szin
+#   - Jobb panel: 6 reszletes ertek (PM2.5, PM10, VOC, NOx, hom, para) +
+#                 horizontal bar progress + nagy szam
+#
+# Adatforras: Sensirion SEN55 multi-szenzor (ESPHome integration HA-n keresztul).
+#
+# Riasztasok:
+#   - PM2.5 > 50: piros, "VESZELYES" notification
+#   - PM2.5 > 35: sarga, "ROSSZ" notification
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# SZENZOROK (mind HA-bol jonnek a SEN55 entitasokon at)
+# -----------------------------------------------------------------------------
+# Bar widget skalazas (a UI bar widget 0-100% kozotti):
+#   - PM2.5: x*4   (0-25 ug/m3 -> 0-100%) jo: <12, kozepes: 12-35, rossz: >35
+#   - PM10:  x*2   (0-50 ug/m3 -> 0-100%)
+#   - VOC:   x/5   (0-500 idx -> 0-100%) jo: <100, magas: >200
+#   - NOx:   x/5   (0-500 idx -> 0-100%)
+#   - Hom:   x*3.33 (0-30°C -> 0-100%) - durva indoor temp megjelenites
+#   - Para:  x      (0-100%  -> 0-100%) - 1:1 kozvetlenul
+sensor:
+  - platform: homeassistant
+    id: aq_pm25
+    entity_id: ${entity_aq_pm25}
+    on_value:
+      then:
+        - lvgl.label.update: { id: ui_pm25_val, text: !lambda 'return str_sprintf("%.1f", x);' }
+        - lvgl.bar.update: { id: ui_pm25_bar, value: !lambda 'return (int)std::min(100.0f, x * 4.0f);' }
+        - if:
+            condition: { lambda: 'return x > 50.0;' }
+            then:
+              - script.execute:
+                  id: show_notification
+                  message: "LEVEGO VESZELYES PM2.5"
+                  icon: "\U000F05D6"
+                  color: 0xFF4444
+                  sticky: false
+        - if:
+            condition: { lambda: 'return x > 35.0 && x <= 50.0;' }
+            then:
+              - script.execute:
+                  id: show_notification
+                  message: "LEVEGO MINOSEG ROSSZ"
+                  icon: "\U000F0026"
+                  color: 0xFFD600
+                  sticky: false
+  - platform: homeassistant
+    id: aq_pm10
+    entity_id: ${entity_aq_pm10}
+    on_value:
+      then:
+        - lvgl.label.update: { id: ui_pm10_val, text: !lambda 'return str_sprintf("%.1f", x);' }
+        - lvgl.bar.update: { id: ui_pm10_bar, value: !lambda 'return (int)std::min(100.0f, x * 2.0f);' }
+  - platform: homeassistant
+    id: aq_voc
+    entity_id: "${entity_aq_voc}"
+    on_value:
+      then:
+        - lvgl.label.update: { id: ui_voc_val, text: !lambda 'return str_sprintf("%.0f", x);' }
+        - lvgl.bar.update: { id: ui_voc_bar, value: !lambda 'return (int)std::min(100.0f, x / 5.0f);' }
+        - lvgl.label.update: { id: ui_aqi_main, text: !lambda 'return str_sprintf("%.0f", x);' }
+        - lvgl.arc.update: { id: ui_aqi_arc, value: !lambda 'return (int)std::min(100.0f, x / 5.0f);' }
+        - lvgl.label.update:
+            id: ui_aqi_status
+            text: !lambda |-
+              if (x <= 50) return std::string("- KIVALO -");
+              if (x <= 100) return std::string("- JO -");
+              if (x <= 150) return std::string("- KOZEPES -");
+              if (x <= 200) return std::string("- ROSSZ -");
+              if (x <= 300) return std::string("- NAGYON ROSSZ -");
+              return std::string("- VESZELYES -");
+            text_color: !lambda |-
+              if (x <= 50) return lv_color_hex(0x00FF88);
+              if (x <= 100) return lv_color_hex(0x00CC66);
+              if (x <= 150) return lv_color_hex(0xFFD600);
+              if (x <= 200) return lv_color_hex(0xFFB800);
+              if (x <= 300) return lv_color_hex(0xFF4444);
+              return lv_color_hex(0x880000);
+        - lvgl.arc.update:
+            id: ui_aqi_arc
+            indicator:
+              arc_color: !lambda |-
+                if (x <= 50) return lv_color_hex(0x00FF88);
+                if (x <= 100) return lv_color_hex(0x00CC66);
+                if (x <= 150) return lv_color_hex(0xFFD600);
+                if (x <= 200) return lv_color_hex(0xFFB800);
+                if (x <= 300) return lv_color_hex(0xFF4444);
+                return lv_color_hex(0x880000);
+  - platform: homeassistant
+    id: aq_nox
+    entity_id: "${entity_aq_nox}"
+    on_value:
+      then:
+        - lvgl.label.update: { id: ui_nox_val, text: !lambda 'return str_sprintf("%.0f", x);' }
+        - lvgl.bar.update: { id: ui_nox_bar, value: !lambda 'return (int)std::min(100.0f, x / 5.0f);' }
+  - platform: homeassistant
+    id: aq_temp
+    entity_id: "${entity_aq_temp}"
+    on_value:
+      then:
+        - lvgl.label.update: { id: ui_aqtemp_val, text: !lambda 'return str_sprintf("%.1f", x);' }
+        - lvgl.bar.update: { id: ui_aqtemp_bar, value: !lambda 'return (int)std::min(100.0f, std::max(0.0f, x * 3.33f));' }
+  - platform: homeassistant
+    id: aq_hum
+    entity_id: "${entity_aq_hum}"
+    on_value:
+      then:
+        - lvgl.label.update: { id: ui_aqhum_val, text: !lambda 'return str_sprintf("%.0f", x);' }
+        - lvgl.bar.update: { id: ui_aqhum_bar, value: !lambda 'return (int)x;' }
+
+# =============================================================================
+# UI - PAGE_AIR (levegominoseg oldal)
+# =============================================================================
+# Layout: 2 panel egymas mellett (420 + 332 = 752 + margok)
+#   - Bal:  Nagy VOC index ARC + szoveges allapot
+#   - Jobb: 6 reszletes ertek (ikon + cimke + bar + szam)
+lvgl:
+  pages:
+    - id: page_air
+      bg_color: 0x000000
+      widgets:
+        - image: { src: bg_home_img, x: 0, y: 0 }
+        - obj:
+            x: 16
+            y: 16
+            width: 420
+            height: 400
+            styles: style_air_card
+            bg_opa: 50%
+            widgets:
+              - obj: { x: 0, y: 0, width: 420, height: 2, bg_color: $color_accent_green, bg_opa: COVER, border_width: 0, radius: 0 }
+              - label: { x: 16, y: 12, text: "LEVEGOMINOSEG", text_font: font_xs, text_color: $color_accent_green, text_letter_space: 2 }
+              - label: { x: 392, y: 10, text: "\U000F0D72", text_font: icons_sm, text_color: $color_accent_green }
+              - obj: { x: 58, y: 18, width: 304, height: 304, bg_opa: TRANSP, border_width: 1, border_color: 0x004422, radius: 152 }
+              - obj: { x: 82, y: 42, width: 256, height: 256, bg_color: 0x040810, bg_opa: 85%, border_width: 0, radius: 128 }
+              - obj: { x: 70, y: 30, width: 280, height: 280, bg_opa: TRANSP, border_width: 12, border_color: 0x1E2235, radius: 140 }
+              - arc:
+                  id: ui_aqi_arc
+                  x: 70
+                  y: 30
+                  width: 280
+                  height: 280
+                  start_angle: 270
+                  end_angle: 90
+                  rotation: 0
+                  arc_color: $color_accent_green
+                  arc_width: 12
+                  min_value: 0
+                  max_value: 100
+                  value: 32
+                  indicator: { arc_color: $color_accent_green, arc_width: 12 }
+              - label: { id: ui_aqi_main, align: CENTER, y: -50, text: "--", text_font: font_mono_huge, text_color: $color_accent_green }
+              - label: { align: CENTER, y: 10, text: "VOC INDEX", text_font: font_xs, text_color: $color_accent_green, text_letter_space: 4 }
+              - label: { id: ui_aqi_status, align: CENTER, y: 90, text: "--", text_font: font_md, text_color: $color_accent_green, text_letter_space: 4 }
+              - label: { align: BOTTOM_MID, y: -16, text: "SEN55 - LIVE DATA", text_font: font_xs, text_color: 0x4A5070, text_letter_space: 4 }
+        - obj:
+            x: 452
+            y: 16
+            width: 332
+            height: 400
+            styles: style_air_card
+            bg_opa: 50%
+            widgets:
+              - obj: { x: 0, y: 0, width: 332, height: 2, bg_color: $color_accent_green, bg_opa: COVER, border_width: 0, radius: 0 }
+              - label: { x: 16, y: 12, text: "RESZLETEK", text_font: font_xs, text_color: $color_accent_green, text_letter_space: 2 }
+              - label: { x: 304, y: 10, text: "\U000F035B", text_font: icons_sm, text_color: $color_accent_green }
+              - obj: { x: 14, y: 40, width: 44, height: 44, bg_color: 0x102A1F, radius: 8, pad_all: 0, widgets: [ label: { align: CENTER, text: "\U000F0E6E", text_font: icons_md, text_color: $color_accent_green } ] }
+              - label: { x: 68, y: 44, text: "PM2.5 - ug/m3", text_font: font_xs, text_color: $color_subtle }
+              - bar: { id: ui_pm25_bar, x: 68, y: 70, width: 165, height: 4, value: 30, indicator: { bg_color: $color_accent_green }, bg_color: 0x1E2235, radius: 2 }
+              - label: { id: ui_pm25_val, x: 246, y: 50, text: "--", text_font: font_mono_lg, text_color: 0x00CC66 }
+              - obj: { x: 14, y: 96, width: 44, height: 44, bg_color: 0x102A1F, radius: 8, pad_all: 0, widgets: [ label: { align: CENTER, text: "\U000F015F", text_font: icons_md, text_color: $color_accent_green } ] }
+              - label: { x: 68, y: 100, text: "PM10 - ug/m3", text_font: font_xs, text_color: $color_subtle }
+              - bar: { id: ui_pm10_bar, x: 68, y: 126, width: 165, height: 4, value: 45, indicator: { bg_color: $color_accent_green }, bg_color: 0x1E2235, radius: 2 }
+              - label: { id: ui_pm10_val, x: 246, y: 106, text: "--", text_font: font_mono_lg, text_color: 0x008844 }
+              - obj: { x: 14, y: 152, width: 44, height: 44, bg_color: 0x1A1330, radius: 8, pad_all: 0, widgets: [ label: { align: CENTER, text: "\U000F0237", text_font: icons_md, text_color: $color_accent_purple } ] }
+              - label: { x: 68, y: 156, text: "VOC - INDEX", text_font: font_xs, text_color: $color_subtle }
+              - bar: { id: ui_voc_bar, x: 68, y: 182, width: 165, height: 4, value: 20, indicator: { bg_color: $color_accent_purple }, bg_color: 0x1E2235, radius: 2 }
+              - label: { id: ui_voc_val, x: 246, y: 162, text: "--", text_font: font_mono_lg, text_color: $color_accent_purple }
+              - obj: { x: 14, y: 208, width: 44, height: 44, bg_color: 0x2A1F08, radius: 8, pad_all: 0, widgets: [ label: { align: CENTER, text: "\U000F0BAC", text_font: icons_md, text_color: $color_accent_amber } ] }
+              - label: { x: 68, y: 212, text: "NOx INDEX", text_font: font_xs, text_color: $color_subtle }
+              - bar: { id: ui_nox_bar, x: 68, y: 238, width: 165, height: 4, value: 55, indicator: { bg_color: $color_accent_amber }, bg_color: 0x1E2235, radius: 2 }
+              - label: { id: ui_nox_val, x: 246, y: 218, text: "--", text_font: font_mono_lg, text_color: 0xAA7800 }
+              - obj: { x: 14, y: 264, width: 44, height: 44, bg_color: 0x07252A, radius: 8, pad_all: 0, widgets: [ label: { align: CENTER, text: "\U000F050F", text_font: icons_md, text_color: $color_accent_blue } ] }
+              - label: { x: 68, y: 268, text: "HOMERSEKLET - C", text_font: font_xs, text_color: $color_subtle }
+              - bar: { id: ui_aqtemp_bar, x: 68, y: 294, width: 165, height: 4, value: 65, indicator: { bg_color: $color_accent_blue }, bg_color: 0x1E2235, radius: 2 }
+              - label: { id: ui_aqtemp_val, x: 246, y: 274, text: "--", text_font: font_mono_lg, text_color: $color_accent_blue }
+              - obj: { x: 14, y: 320, width: 44, height: 44, bg_color: 0x07252A, radius: 8, pad_all: 0, widgets: [ label: { align: CENTER, text: "\U000F058E", text_font: icons_md, text_color: $color_accent_blue } ] }
+              - label: { x: 68, y: 324, text: "PARATARTALOM - %", text_font: font_xs, text_color: $color_subtle }
+              - bar: { id: ui_aqhum_bar, x: 68, y: 350, width: 165, height: 4, value: 48, indicator: { bg_color: $color_accent_blue }, bg_color: 0x1E2235, radius: 2 }
+              - label: { id: ui_aqhum_val, x: 246, y: 330, text: "--", text_font: font_mono_lg, text_color: 0x00BBDD }

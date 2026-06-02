@@ -1,0 +1,1099 @@
+# =============================================================================
+# dashboard_43/core.yaml
+# -----------------------------------------------------------------------------
+# HARDVER + GLOBALIS LOGIKA + UI ALAPELEMEK
+# -----------------------------------------------------------------------------
+# Ez a legmagasabb szintu modul, itt van minden ami minden mas oldal
+# elott megy:
+#   - I2C bus, CH422G IO expander (a board chip-je)
+#   - LCD backlight kapcsolo
+#   - 800x480 RGB display config
+#   - GT911 touchscreen
+#   - Sun + time integration (HA-bol)
+#   - Globalis valtozok (notification, boot, carousel)
+#   - Globalis szenzorok (WiFi RSSI, HA online)
+#   - Globalis scriptek (boot, notification, set_tab_active, refresh_clock)
+#   - Fontok + MDI ikonok + idojaras PNG-k
+#   - top_layer: notification bar + main tab bar (kozos UI elemek)
+#   - Boot screen (page_boot - cyan/amber "MIKZONE BOTI" branding)
+#   - Card styles (style_card, style_holo_panel, stb.)
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# I2C bus - a CH422G IO expander es a GT911 touch szenzort jelenleti
+# -----------------------------------------------------------------------------
+i2c:
+  sda: GPIO8
+  scl: GPIO9
+  id: bus_a
+
+# -----------------------------------------------------------------------------
+# CH422G IO expander - extra GPIO-k a board-ra
+# -----------------------------------------------------------------------------
+# A Waveshare board nem rendelkezik eleg natív GPIO-val, igy egy I2C IO
+# expandert hasznalnak. Innen jonnek a display reset, enable, backlight
+# es touch reset pinjeit.
+ch422g:
+  - id: ch422g_hub
+    i2c_id: bus_a
+
+# -----------------------------------------------------------------------------
+# LCD backlight - SWITCH (nem light!)
+# -----------------------------------------------------------------------------
+# Azert switch es NEM light, hogy egy HA "osszes lampa kikapcsolasa"
+# (light.turn_off entity_id: all) parancs NE kapcsolja le a hattervilagitast.
+# Switch entitaskent a light-muveletek nem erintik.
+#
+# FONTOS pin info: a CH422G EXIO2 = LCD_BL (backlight). Korabban tevesen a
+# 4-es pin (= SD_CS) volt beallitva, ezert nem mukodott a kapcsolas. Plusz a
+# display enable_pin-t is el kellett tavolitani az EXIO2-rol (lasd lentebb).
+# HA-ban "switch.hattervilagitas" neven erheto el.
+output:
+  - platform: gpio
+    id: backlight_out
+    pin:
+      ch422g: ch422g_hub
+      number: 2   # CH422G EXIO2 = LCD_BL (backlight). FONTOS: NEM 4! (a 4 = SD_CS)
+
+switch:
+  - platform: output
+    id: lcd_backlight
+    name: "Hattervilagitas"
+    output: backlight_out
+    restore_mode: RESTORE_DEFAULT_ON   # Reboot utan az utolso mentett allapot (default ON)
+
+# -----------------------------------------------------------------------------
+# RGB DISPLAY (800x480)
+# -----------------------------------------------------------------------------
+# A board egy parallel RGB interface-szel csatlakozik a kepernyore.
+# A timings (porch + pulse width) a panel datasheetjebol szarmaznak.
+# IMPORTANT: a `rpi_dpi_rgb` deprecated, de a `mipi_rgb` model parametert
+# kover (specifikus panel ID), igy egyelore meghagyjuk a regit.
+display:
+  - platform: rpi_dpi_rgb
+    id: my_display
+    auto_clear_enabled: false
+    color_order: RGB
+    pclk_frequency: 16MHz
+    dimensions:
+      width: 800
+      height: 480
+    de_pin: 5
+    hsync_pin: { number: 46, ignore_strapping_warning: true }
+    vsync_pin: { number: 3, ignore_strapping_warning: true }
+    pclk_pin: 7
+    reset_pin: { ch422g: ch422g_hub, number: 3 }
+    # FONTOS: enable_pin ELTAVOLITVA! Az EXIO2 valojaban a LCD_BL (backlight) pin.
+    # Ha itt enable_pin-kent lefoglaljuk, a display ON-ban tartja -> a backlight
+    # light entitas (lcd_backlight, szinten EXIO2) nem tudja kikapcsolni.
+    # Az rpi_dpi_rgb platformnal az enable_pin opcionalis - nelkule is mukodik.
+    hsync_back_porch: 16
+    hsync_front_porch: 16
+    hsync_pulse_width: 8
+    vsync_back_porch: 16
+    vsync_front_porch: 16
+    vsync_pulse_width: 8
+    data_pins:
+      red:   [1, 2, 42, 41, 40]
+      green: [39, 0, 45, 48, 47, 21]
+      blue:  [14, 38, 18, 17, 10]
+
+# -----------------------------------------------------------------------------
+# TOUCH - GT911 kapacitiv erinto vezerlo
+# -----------------------------------------------------------------------------
+touchscreen:
+  - platform: gt911
+    id: my_touch
+    display: my_display
+    i2c_id: bus_a
+    address: 0x5D
+    reset_pin: { ch422g: ch422g_hub, number: 1 }
+
+# -----------------------------------------------------------------------------
+# Sun integration - napkelte/naplemente kiszamitas (Miercurea-Ciuc, RO)
+# -----------------------------------------------------------------------------
+sun:
+  latitude: 46.36°
+  longitude: 25.79°
+  id: sun_data
+
+# -----------------------------------------------------------------------------
+# Idoforras - HA-bol szinkronizalt time
+# -----------------------------------------------------------------------------
+# A `ha_time` egy time component-et hoz letre, amit az osszes oldal hasznal
+# (orajelzo, datum, ejszakai mod kiertekeles, napnevek).
+#
+# on_time: oranként FUT (`hours: '*'`) - kinullazza a manualis snooze-ot
+# es ujraertekeli az ejszakai mod feltetelet. A konkret kezdo/veg orakat a
+# `night_start_hour` / `night_end_hour` HA number entitasok adjak meg
+# (lasd: night_mode.yaml).
+time:
+  - platform: homeassistant
+    id: ha_time
+    timezone: "Europe/Bucharest"
+    on_time:
+      - seconds: 0
+        minutes: 0
+        hours: '*'
+        then:
+          - lambda: 'id(night_snooze) = false;'  # Snooze elfelejt minden oraban
+          - script.execute: evaluate_night_mode
+
+# -----------------------------------------------------------------------------
+# GLOBALIS VALTOZOK (runtime state, nem perzisztens kivetel jelezve)
+# -----------------------------------------------------------------------------
+globals:
+  # --- Notification rendszer ---
+  - id: notify_active           # Notification jelenleg latszik-e
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: notify_sticky           # Sticky (NE tunjon el automatikusan) - pl. kapu nyitva
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: notify_timer_id         # Race condition vedelem - csak az utolso hide-olas
+    type: int                   # erveny es (egy regi delay nem zarja a frissebb notification-t)
+    restore_value: false
+    initial_value: "0"
+
+  # --- Boot screen animacio progress ---
+  - id: boot_progress           # 0-100% (bar + arc forgatas)
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: boot_done               # True ha a boot szekvencia befejezodott
+    type: bool
+    restore_value: false
+    initial_value: "false"
+
+# -----------------------------------------------------------------------------
+# SZENZOROK (cross-cutting - mind az osszes oldalon hasznalt)
+# -----------------------------------------------------------------------------
+sensor:
+  # WiFi jelerosseg (dBm) - settings/HA panelen latszik
+  - platform: wifi_signal
+    id: wifi_signal_dbm
+    update_interval: 30s
+    on_value:
+      then:
+        - lvgl.label.update: { id: ui_wifi_rssi, text: !lambda 'return str_sprintf("%.0f dBm", x);' }
+
+binary_sensor:
+  # Home Assistant API kapcsolat allapota - ha megszakad, piros, ha live, zold
+  - platform: status
+    id: api_status
+    on_state:
+      then:
+        - lvgl.label.update: { id: ui_ha_status, text: !lambda 'return std::string(x ? "ONLINE" : "OFFLINE");', text_color: !lambda 'return x ? lv_color_hex(0x00FF88) : lv_color_hex(0xFF4444);' }
+        - lvgl.label.update: { id: ui_ha_icon, text_color: !lambda 'return x ? lv_color_hex(0x41BDF5) : lv_color_hex(0x3A4060);' }
+
+# -----------------------------------------------------------------------------
+# IDOZITOK (periodikus feladatok)
+# -----------------------------------------------------------------------------
+interval:
+  # 1mp: ora frissites (orajelzo + kettospont villogas + napnevek a forecast oldalra)
+  - interval: 1s
+    then:
+      - script.execute: refresh_clock
+
+  # 3mp: WiFi kapcsolat ikon frissites (zold ha conn, piros ha nincs)
+  - interval: 3s
+    then:
+      - if:
+          condition: { wifi.connected: }
+          then:
+            - lvgl.label.update: { id: ui_wifi_icon, text: "\U000F05A9", text_color: $color_accent_green }
+          else:
+            - lvgl.label.update: { id: ui_wifi_icon, text: "\U000F05AA", text_color: $color_danger }
+
+  # 1perc: napkelte/naplemente idopontok ujrakalkulalas (sun integration)
+  - interval: 1min
+    then:
+      - script.execute: refresh_sun
+
+# -----------------------------------------------------------------------------
+# SCRIPTEK (mind a globalis logikahoz - notification, boot, page navigation)
+# -----------------------------------------------------------------------------
+script:
+  # ---------------------------------------------------------------------------
+  # BOOT SEQUENCE - sajat brand-elt boot screen animacio
+  # ---------------------------------------------------------------------------
+  # Az on_boot priority: -100 -bol hivva (esphome-web-bac910.yaml).
+  # 20 iteracion at futtatott 5%-os lepesekkel (3 mp osszesen):
+  #   - Tolto bar 0% -> 100% (LV_ANIM_ON: sima atmenet)
+  #   - Cyan arc forgatasa (transform_angle)
+  # Befejezeskor:
+  #   - refresh_sun: napkelte/naplemente kiszamitas
+  #   - evaluate_night_mode: ejszakai mod aktiv-e? (auto utemezes szerint)
+  #   - main_tab_bar megjelenik
+  - id: boot_sequence
+    then:
+      - lvgl.page.show: page_boot
+      - lvgl.widget.hide: main_tab_bar
+      - repeat:
+          count: 20
+          then:
+            - lambda: |-
+                id(boot_progress) += 5;
+                lv_bar_set_value(id(ui_boot_bar), id(boot_progress), LV_ANIM_ON);
+                int angle = id(boot_progress) * 7;
+                lv_obj_set_style_transform_angle(id(ui_boot_arc), angle * 10, 0);
+            - delay: 150ms
+      - delay: 500ms
+      - lambda: 'id(boot_done) = true;'
+      - script.execute: refresh_sun
+      - script.execute: evaluate_night_mode
+      - lvgl.widget.show: main_tab_bar
+
+  # ---------------------------------------------------------------------------
+  # SHOW_NOTIFICATION - felso ertesito sav megjelenitese (top_layer)
+  # ---------------------------------------------------------------------------
+  # Paramekek:
+  #   message: a megjelenitendo szoveg ("KAPU NYITVA", "PM2.5 MAGAS", stb.)
+  #   icon:    MDI ikon unicode kod (pl. "\U000F0026" = alert)
+  #   color:   hex szin (felirat + alulhuzas - context-dependens severity szín)
+  #   sticky:  true = ne tunjon el 5s utan automatikusan (pl. kapu nyitva)
+  #
+  # mode: restart - egy uj show_notification azonnal felulirja a regit
+  # (mar futo delay-ek kovetik a notify_timer_id-t, ne zarjak be a frissebbet).
+  - id: show_notification
+    mode: restart
+    parameters:
+      message: string
+      icon: string
+      color: int
+      sticky: bool
+    then:
+      - lambda: |-
+          id(notify_active) = true;
+          id(notify_sticky) = sticky;
+          id(notify_timer_id) = (id(notify_timer_id) + 1) % 1000;
+      - lvgl.label.update: { id: ui_notify_text, text: !lambda 'return message;' }
+      - lvgl.label.update: { id: ui_notify_icon, text: !lambda 'return icon;', text_color: !lambda 'return lv_color_hex(color);' }
+      - lvgl.widget.update: { id: ui_notify_underline, bg_color: !lambda 'return lv_color_hex(color);' }
+      - lvgl.widget.show: ui_notify_bar
+      # Ha nem sticky: 5mp utan auto-hide (de csak ha kozben nem lett uj notification!)
+      - if:
+          condition:
+            lambda: 'return !sticky;'
+          then:
+            - lambda: |-
+                int my_id = id(notify_timer_id);
+            - delay: 5s
+            - if:
+                condition:
+                  lambda: |-
+                    return id(notify_active) && !id(notify_sticky);
+                then:
+                  - script.execute: hide_notification
+
+  # HIDE_NOTIFICATION - notification sav kikapcsolasa (sticky vagy timer altal)
+  - id: hide_notification
+    then:
+      - lvgl.widget.hide: ui_notify_bar
+      - lambda: |-
+          id(notify_active) = false;
+          id(notify_sticky) = false;
+
+  # ---------------------------------------------------------------------------
+  # SET_TAB_ACTIVE - oldalvaltas a fo tab bar-bol
+  # ---------------------------------------------------------------------------
+  # Parameter:
+  #   tab_index: 0=Home, 1=Air, 2=Solar, 3=Radar, 4=Lights, 5=Heating
+  #
+  # Mukodes:
+  #   1. Tab bar megjelenitese (ha el volt rejtve)
+  #   2. Carousel reset + radar aktiv flag
+  #   3. Lambda: minden tab gomb DEFAULT (inaktiv szin) - tomb + for ciklus
+  #   4. Lambda: aktiv tab kiemelese (accent szin border + szoveg)
+  #   5. YAML: lvgl.page.show a megfelelo oldalra (LvPageType* nem lv_obj_t*,
+  #      ezert nem lehet egyetlen lambdaba osszevonva a page valtast)
+  - id: set_tab_active
+    parameters:
+      tab_index: int
+    then:
+      - lvgl.widget.update: { id: main_tab_bar, hidden: false }
+      - lambda: |-
+          // Globalis flag-ek
+          id(is_radar_active) = (tab_index == 3);
+          id(carousel_current_tab) = tab_index;
+          id(carousel_tick) = 0;
+
+          // Widget + szin tomb (sorrend: Home, Air, Solar, Radar, Lights, Heating)
+          lv_obj_t* btns[]  = {id(btn_tab_home), id(btn_tab_air), id(btn_tab_solar), id(btn_tab_radar), id(btn_tab_lights), id(btn_tab_heating)};
+          lv_obj_t* icons[] = {id(tab_icon_home), id(tab_icon_air), id(tab_icon_solar), id(tab_icon_radar), id(tab_icon_lights), id(tab_icon_heating)};
+          lv_obj_t* texts[] = {id(tab_text_home), id(tab_text_air), id(tab_text_solar), id(tab_text_radar), id(tab_text_lights), id(tab_text_heating)};
+          lv_color_t colors[] = {
+            lv_color_hex(0x00E5FF), lv_color_hex(0x00FF88), lv_color_hex(0xFFB800),
+            lv_color_hex(0x7B5CF5), lv_color_hex(0xFFD600), lv_color_hex(0xFF6B35)
+          };
+          lv_color_t inactive = lv_color_hex(0x3A4060);
+
+          // 1. Lepes: mindenkit visszaallitunk inactive-re
+          for (int i = 0; i < 6; i++) {
+            lv_obj_set_style_border_width(btns[i], 0, 0);
+            lv_obj_set_style_text_color(icons[i], inactive, 0);
+            lv_obj_set_style_text_color(texts[i], inactive, 0);
+          }
+
+          // 2. Lepes: aktiv tab kiemelese (border + accent szin)
+          if (tab_index >= 0 && tab_index < 6) {
+            lv_obj_set_style_border_width(btns[tab_index], 2, 0);
+            lv_obj_set_style_border_color(btns[tab_index], colors[tab_index], 0);
+            lv_obj_set_style_text_color(icons[tab_index], colors[tab_index], 0);
+            lv_obj_set_style_text_color(texts[tab_index], colors[tab_index], 0);
+          }
+      # Page show - LvPageType nem lv_obj_t*, ezert YAML action kell (nem lehet lambdaba)
+      - if: { condition: { lambda: 'return tab_index == 0;' }, then: [lvgl.page.show: page_home] }
+      - if: { condition: { lambda: 'return tab_index == 1;' }, then: [lvgl.page.show: page_air] }
+      - if: { condition: { lambda: 'return tab_index == 2;' }, then: [lvgl.page.show: page_solar] }
+      - if: { condition: { lambda: 'return tab_index == 3;' }, then: [lvgl.page.show: page_radar] }
+      - if: { condition: { lambda: 'return tab_index == 4;' }, then: [lvgl.page.show: page_lights] }
+      - if: { condition: { lambda: 'return tab_index == 5;' }, then: [lvgl.page.show: page_heating] }
+
+  # ---------------------------------------------------------------------------
+  # REFRESH_CLOCK - 1mp-enkenti idokorrekcio
+  # ---------------------------------------------------------------------------
+  # Frissiti az osszes idot mutato UI elemet:
+  #   - Home: nagy ora (ui_time_hh, ui_time_mm, ui_time_colon villog)
+  #   - Home: datum + nap
+  #   - Forecast overlay: datum + nap
+  #   - Forecast overlay: 5 napos sor (fc_day_d1..d5) - HELYI SZAMITAS
+  #     (MA, HOLNAP, KED, SZE, CSU stb. - mai naptol szamolva)
+  #   - Ejszakai mod oldalak: ido, datum, ora/perc arc-ok
+  - id: refresh_clock
+    then:
+      - if:
+          condition: { lambda: 'return id(ha_time).now().is_valid();' }
+          then:
+            - lvgl.label.update: { id: ui_time_hh, text: !lambda 'return str_sprintf("%02d", id(ha_time).now().hour);' }
+            - lvgl.label.update: { id: ui_time_mm, text: !lambda 'return str_sprintf("%02d", id(ha_time).now().minute);' }
+            - lvgl.label.update: { id: ui_time_colon, text: !lambda 'return std::string((id(ha_time).now().second % 2 == 0) ? ":" : " ");' }
+            - lvgl.label.update:
+                id: ui_date_label
+                text: !lambda |-
+                  auto t = id(ha_time).now();
+                  const char* days[] = {"VASARNAP","HETFO","KEDD","SZERDA","CSUTORTOK","PENTEK","SZOMBAT"};
+                  return str_sprintf("%s, %04d. %02d. %02d.", days[(t.day_of_week-1)%7], t.year, t.month, t.day_of_month);
+            - lvgl.label.update:
+                id: ui_fc_date_label
+                text: !lambda |-
+                  auto t = id(ha_time).now();
+                  const char* months[] = {"januar","februar","marcius","aprilis","majus","junius","julius","augusztus","szeptember","oktober","november","december"};
+                  return str_sprintf("%s %d.", months[(t.month-1)%12], t.day_of_month);
+            - lvgl.label.update:
+                id: ui_fc_day_label
+                text: !lambda |-
+                  auto t = id(ha_time).now();
+                  const char* days[] = {"Vasarnap","Hetfo","Kedd","Szerda","Csutortok","Pentek","Szombat"};
+                  return std::string(days[(t.day_of_week-1)%7]);
+            # 5 napos elorejelzes napnevei (d1=MA, d2=HOLNAP, ...)
+            - lambda: |-
+                auto t = id(ha_time).now();
+                const char* days_short[] = {"VAS","HET","KED","SZE","CSU","PEN","SZO"};
+                int today_idx = (t.day_of_week - 1) % 7;
+                lv_obj_t* lbls[] = {id(fc_day_d1), id(fc_day_d2), id(fc_day_d3), id(fc_day_d4), id(fc_day_d5)};
+                for (int i = 0; i < 5; i++) {
+                  if (i == 0) {
+                    lv_label_set_text(lbls[i], "MA");
+                  } else if (i == 1) {
+                    lv_label_set_text(lbls[i], "HOLNAP");
+                  } else {
+                    int day_idx = (today_idx + i) % 7;
+                    lv_label_set_text(lbls[i], days_short[day_idx]);
+                  }
+                }
+            - lvgl.label.update: { id: ui_night_amber_time,  text: !lambda 'return str_sprintf("%02d:%02d", id(ha_time).now().hour, id(ha_time).now().minute);' }
+            - lvgl.label.update: { id: ui_night_matrix_time, text: !lambda 'return str_sprintf("%02d:%02d", id(ha_time).now().hour, id(ha_time).now().minute);' }
+            - lvgl.label.update:
+                id: ui_night_amber_date
+                text: !lambda |-
+                  auto t = id(ha_time).now();
+                  const char* days[] = {"VASARNAP","HETFO","KEDD","SZERDA","CSUTORTOK","PENTEK","SZOMBAT"};
+                  return str_sprintf("%s, %04d. %02d. %02d.", days[(t.day_of_week-1)%7], t.year, t.month, t.day_of_month);
+            - lvgl.label.update:
+                id: ui_night_matrix_date
+                text: !lambda |-
+                  auto t = id(ha_time).now();
+                  const char* days[] = {"VASARNAP","HETFO","KEDD","SZERDA","CSUTORTOK","PENTEK","SZOMBAT"};
+                  return str_sprintf("%04d. %02d. %02d. %s", t.year, t.month, t.day_of_month, days[(t.day_of_week-1)%7]);
+            - lvgl.arc.update: { id: ui_night_hour_arc, value: !lambda 'return (int)id(ha_time).now().hour;' }
+            - lvgl.arc.update: { id: ui_night_min_arc,  value: !lambda 'return (int)id(ha_time).now().minute;' }
+            - lvgl.arc.update: { id: ui_night_sec_arc,  value: !lambda 'return (int)id(ha_time).now().second;' }
+
+  # ---------------------------------------------------------------------------
+  # REFRESH_SUN - napkelte/naplemente idopontok frissitese
+  # ---------------------------------------------------------------------------
+  # Az 1 percenkenti interval hivja (a sun adatok lassan valtoznak).
+  # A -0.833° az astronomical horizon korrekcio (tukor + atmoszferikus refrakció).
+  # Frissiti a home oldal (ui_sunrise/sunset_label) es a forecast overlay
+  # (ui_fc_sunrise/sunset) labeleket egyseges "HH:MM" formatumban.
+  - id: refresh_sun
+    then:
+      - lvgl.label.update:
+          id: ui_sunrise_label
+          text: !lambda |-
+            auto sr = id(sun_data).sunrise(-0.833);
+            if (!sr.has_value()) return std::string("--:--");
+            return sr.value().strftime("%H:%M");
+      - lvgl.label.update:
+          id: ui_sunset_label
+          text: !lambda |-
+            auto ss = id(sun_data).sunset(-0.833);
+            if (!ss.has_value()) return std::string("--:--");
+            return ss.value().strftime("%H:%M");
+      - lvgl.label.update:
+          id: ui_fc_sunrise
+          text: !lambda |-
+            auto sr = id(sun_data).sunrise(-0.833);
+            if (!sr.has_value()) return std::string("--:--");
+            return sr.value().strftime("%H:%M");
+      - lvgl.label.update:
+          id: ui_fc_sunset
+          text: !lambda |-
+            auto ss = id(sun_data).sunset(-0.833);
+            if (!ss.has_value()) return std::string("--:--");
+            return ss.value().strftime("%H:%M");
+
+# =============================================================================
+# KEPEK (idojaras ikonok)
+# =============================================================================
+# A PNG fajlok a `icons/` mappaban vannak (a config konyvtarban),
+# `transparency: alpha_channel` = RGB565 + alpha (atlatszosag).
+# Resize a betoltesi idoben tortenik (nem futasidoben).
+# =============================================================================
+image:
+  # ===== Nagy ikonok (115x115) - home + forecast bal panel =====
+  - id: img_sunny
+    file: "icons/sunny.png"
+    resize: 115x115
+    type: RGB565
+    transparency: alpha_channel
+  - id: img_cloudy
+    file: "icons/cloudy.png"
+    resize: 115x115
+    type: RGB565
+    transparency: alpha_channel
+  - id: img_partlycloudy
+    file: "icons/partly_cloudy.png"
+    resize: 115x115
+    type: RGB565
+    transparency: alpha_channel
+  - id: img_rainy
+    file: "icons/rainy.png"
+    resize: 115x115
+    type: RGB565
+    transparency: alpha_channel
+  - id: img_pouring
+    file: "icons/pouring.png"
+    resize: 115x115
+    type: RGB565
+    transparency: alpha_channel
+  - id: img_snowy
+    file: "icons/snowy.png"
+    resize: 115x115
+    type: RGB565
+    transparency: alpha_channel
+  - id: img_windy
+    file: "icons/windy.png"
+    resize: 115x115
+    type: RGB565
+    transparency: alpha_channel
+  - id: img_night
+    file: "icons/night.png"
+    resize: 115x115
+    type: RGB565
+    transparency: alpha_channel
+  - id: img_thunderstorm
+    file: "icons/thunderstorm.png"
+    resize: 115x115
+    type: RGB565
+    transparency: alpha_channel
+  # ===== KICSI ikonok (50x50) - forecast also sor =====
+  - id: img_sm_sunny
+    file: "icons/sunny.png"
+    resize: 50x50
+    type: RGB565
+    transparency: alpha_channel
+  - id: img_sm_cloudy
+    file: "icons/cloudy.png"
+    resize: 50x50
+    type: RGB565
+    transparency: alpha_channel
+  - id: img_sm_partlycloudy
+    file: "icons/partly_cloudy.png"
+    resize: 50x50
+    type: RGB565
+    transparency: alpha_channel
+  - id: img_sm_rainy
+    file: "icons/rainy.png"
+    resize: 50x50
+    type: RGB565
+    transparency: alpha_channel
+  - id: img_sm_pouring
+    file: "icons/pouring.png"
+    resize: 50x50
+    type: RGB565
+    transparency: alpha_channel
+  - id: img_sm_snowy
+    file: "icons/snowy.png"
+    resize: 50x50
+    type: RGB565
+    transparency: alpha_channel
+  - id: img_sm_windy
+    file: "icons/windy.png"
+    resize: 50x50
+    type: RGB565
+    transparency: alpha_channel
+  - id: img_sm_night
+    file: "icons/night.png"
+    resize: 50x50
+    type: RGB565
+    transparency: alpha_channel
+  - id: img_sm_thunderstorm
+    file: "icons/thunderstorm.png"
+    resize: 50x50
+    type: RGB565
+    transparency: alpha_channel
+  # ===== Hatterek =====
+  - id: bg_solar
+    file: "icons/solar.png"
+    resize: 800x432
+    type: RGB565
+  - id: bg_home_img
+    file: "icons/background.png"
+    resize: 800x432
+    type: RGB565
+
+# =============================================================================
+# FONTOK
+# =============================================================================
+# Ket csalad: Roboto (proporcionalis - feliratok) + Roboto Mono (monospace -
+# szamok, idoertekek). A `glyphs:` szuri a betoltodo karaktereket - csak a
+# tenyleges hasznalatakat (a magyar ekezetes betuk hianyoznak - ne hasznald!).
+#
+# Meret-sorrend:
+#   xs (9-11)  - alcimek, jegyzetek
+#   sm (11-13) - kis feliratok, mb/km/h egysegek
+#   md (16)    - alapertelmezett szovegek
+#   lg (20-24) - kiemelt szovegek, ertekek
+#   xl (44)    - brand cimkek (boot screen)
+#   huge (72)  - nagy szamok (clock, AQI)
+#   mega (110) - ora a kezdo oldalon
+# =============================================================================
+font:
+  # --- Roboto (proporcionalis - feliratok, gombok) ---
+  - file: "gfonts://Roboto"
+    id: font_xs
+    size: 11
+    glyphs: ' !"#$%&()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]_`abcdefghijklmnopqrstuvwxyz{|}~°'
+  - file: "gfonts://Roboto"
+    id: font_sm
+    size: 13
+    glyphs: ' !"#$%&()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]_`abcdefghijklmnopqrstuvwxyz{|}~°'
+  - file: "gfonts://Roboto"
+    id: font_md
+    size: 16
+    glyphs: ' !"#$%&()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]_`abcdefghijklmnopqrstuvwxyz{|}~°'
+  - file: "gfonts://Roboto"
+    id: font_lg
+    size: 20
+    glyphs: ' !"#$%&()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]_`abcdefghijklmnopqrstuvwxyz{|}~°'
+
+  # --- Roboto Mono (monospace - szamok, idok, ertekek) ---
+  - file: "gfonts://Roboto Mono"
+    id: font_mono_xs
+    size: 9
+    glyphs: ' !"#$%&()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]_`abcdefghijklmnopqrstuvwxyz{|}~°'
+  - file: "gfonts://Roboto Mono"
+    id: font_mono_sm
+    size: 11
+    glyphs: ' !"#$%&()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]_`abcdefghijklmnopqrstuvwxyz{|}~°'
+  - file: "gfonts://Roboto Mono"
+    id: font_mono_md
+    size: 16
+    glyphs: ' !"#$%&()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]_`abcdefghijklmnopqrstuvwxyz{|}~°'
+  - file: "gfonts://Roboto Mono"
+    id: font_mono_lg
+    size: 24
+    glyphs: ' !"#$%&()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]_`abcdefghijklmnopqrstuvwxyz{|}~°'
+  - file: "gfonts://Roboto Mono"
+    id: font_mono_xl
+    size: 44
+    glyphs: ' !"#$%&()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]_`abcdefghijklmnopqrstuvwxyz{|}~°'
+  - file: "gfonts://Roboto Mono"
+    id: font_mono_huge
+    size: 72
+    glyphs: ' !"#$%&()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]_`abcdefghijklmnopqrstuvwxyz{|}~°'
+  - file: "gfonts://Roboto Mono"
+    id: font_mono_mega
+    size: 110
+    glyphs: ' !"#$%&()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]_`abcdefghijklmnopqrstuvwxyz{|}~°'
+  # --- Roboto light (300 weight) - csak a Forecast nagy homerseklethez ---
+  # Seattle weather app stilus, vekony es elegans 130px. Korlatozott glyph
+  # set (csak szamok, °, +/-) - kisebb flash hely.
+  - file:
+      type: gfonts
+      family: Roboto
+      weight: 300
+    id: font_temp_huge
+    size: 130
+    glyphs: '0123456789-°+'
+
+  # ===== Material Design Icons (egyetlen file, 5 meretben) =====
+  # A &mdi_glyphs YAML anchor egyszer definialja a glyphs listat, a tobbi
+  # meret (md, lg, xl, huge) ezt hivatkozza *mdi_glyphs syntaxsszal -
+  # igy nem kell ujra es ujra masolni.
+  - file: "materialdesignicons-webfont.ttf"
+    id: icons_sm
+    size: 18
+    glyphs: &mdi_glyphs
+      - "\U000F02DC"  # home
+      - "\U000F0599"  # weather-sunny
+      - "\U000F0590"  # weather-cloudy
+      - "\U000F0595"  # weather-partly-cloudy
+      - "\U000F0594"  # weather-night
+      - "\U000F0597"  # weather-pouring
+      - "\U000F0598"  # weather-rainy
+      - "\U000F0596"  # weather-snowy
+      - "\U000F059D"  # weather-windy
+      - "\U000F050F"  # thermometer
+      - "\U000F058E"  # water-percent
+      - "\U000F029C"  # gauge
+      - "\U000F05B3"  # weather-sunset-up
+      - "\U000F05B2"  # weather-sunset-down
+      - "\U000F07D0"  # home-assistant
+      - "\U000F0565"  # shield-check
+      - "\U000F0150"  # clock-outline
+      - "\U000F0D72"  # air-filter
+      - "\U000F0237"  # flask
+      - "\U000F07E4"  # molecule-co2
+      - "\U000F015F"  # cloud
+      - "\U000F0E6E"  # weather-dust
+      - "\U000F0241"  # flash
+      - "\U000F0A6D"  # solar-power
+      - "\U000F008E"  # battery
+      - "\U000F12A6"  # battery-charging-medium
+      - "\U000F0D1F"  # transmission-tower
+      - "\U000F0128"  # chart-bar
+      - "\U000F012A"  # chart-line
+      - "\U000F0437"  # radar
+      - "\U000F0208"  # eye
+      - "\U000F0583"  # walk
+      - "\U000F0335"  # lightbulb
+      - "\U000F0E4F"  # lightbulb-off
+      - "\U000F06B5"  # lamp
+      - "\U000F0238"  # fire
+      - "\U000F0411"  # radiator
+      - "\U000F081A"  # door
+      - "\U000F05B5"  # window-closed
+      - "\U000F0425"  # power
+      - "\U000F0381"  # movie
+      - "\U000F0188"  # emoticon-happy-outline
+      - "\U000F0F5F"  # moon-waning-crescent
+      - "\U000F0274"  # led-strip-variant
+      - "\U000F035B"  # format-list-bulleted
+      - "\U000F0BAC"  # molecule (NOx)
+      - "\U000F05A9"  # wifi
+      - "\U000F05AA"  # wifi-off
+      - "\U000F0591"  # weather-fog
+      - "\U000F0592"  # weather-hail
+      - "\U000F0493"  # cog (settings)
+      - "\U000F0026"  # alert (notification)
+      - "\U000F002A"  # alert-circle
+      - "\U000F05D6"  # alert-octagon (danger)
+      - "\U000F0156"  # close (X)
+      - "\U000F0454"  # rotate-3d (carousel)
+      - "\U000F034E"  # map-marker (location pin)
+      - "\U000F03E8"  # arrow-up-bold
+      - "\U000F06A5"  # power-plug
+  - file: "materialdesignicons-webfont.ttf"
+    id: icons_md
+    size: 28
+    glyphs: *mdi_glyphs
+  - file: "materialdesignicons-webfont.ttf"
+    id: icons_lg
+    size: 44
+    glyphs: *mdi_glyphs
+  - file: "materialdesignicons-webfont.ttf"
+    id: icons_xl
+    size: 64
+    glyphs: *mdi_glyphs
+  - file: "materialdesignicons-webfont.ttf"
+    id: icons_huge
+    size: 96
+    glyphs: *mdi_glyphs
+
+# =============================================================================
+# LVGL CONFIG
+# =============================================================================
+# A buffer_size: 100% = full screen double buffer (PSRAM-ban).
+# A style_definitions blokk a kartyak/gombok kozos stilusait gyujti egybe -
+# minden oldal hivatkozza ezeket (styles: style_xxx).
+# =============================================================================
+lvgl:
+  displays: [my_display]
+  touchscreens: [my_touch]
+  buffer_size: 100%   # Full screen buffer - sima animaciok, de PSRAM-igenyes
+  bg_color: $color_bg
+  text_color: $color_text_main
+  border_width: 0
+
+  # ---------------------------------------------------------------------------
+  # KOZOS STILUSOK (kartyak, panel-ek, gombok)
+  # ---------------------------------------------------------------------------
+  style_definitions:
+    # Alapertelmezett kartya: sotetkek gradient + finom border
+    - id: style_card
+      bg_color: 0x10131F
+      bg_grad_color: 0x161A28
+      bg_grad_dir: VER
+      bg_opa: COVER
+      border_width: 1
+      border_color: 0x242A40
+      radius: 14
+      pad_all: 0
+
+    # Radar oldal kartya: zold accent border
+    - id: style_radar_card
+      bg_color: 0x0A0C14
+      bg_grad_color: 0x10131F
+      bg_grad_dir: VER
+      bg_opa: COVER
+      border_width: 1
+      border_color: $color_accent_green
+      radius: 14
+      pad_all: 0
+    # Radar villanopont: zold glow effekttel (animalt)
+    - id: style_radar_dot
+      bg_color: $color_accent_green
+      bg_opa: COVER
+      radius: 6
+      shadow_color: $color_accent_green
+      shadow_width: 25
+      shadow_spread: 4
+      shadow_opa: COVER
+
+    # Radar aktivitas histogramm sav (12 db bar a radar oldalon)
+    - id: style_radar_bar
+      bg_color: 0x1A1D2E
+      bg_opa: COVER
+      border_width: 0
+      radius: 2
+
+    # Levego oldal kartyaja: sotetzold gradient + zold border
+    - id: style_air_card
+      bg_color: 0x0C2218
+      bg_grad_color: 0x030508
+      bg_grad_dir: VER
+      bg_opa: COVER
+      border_width: 1
+      border_color: $color_accent_green
+      radius: 14
+      pad_all: 0
+
+    # Lampak oldal kartyaja: alapertelmezett, atlatszobb (78% opa)
+    - id: style_light_card
+      bg_color: 0x10131F
+      bg_grad_color: 0x161A28
+      bg_grad_dir: VER
+      bg_opa: 78%
+      border_width: 1
+      border_color: 0x242A40
+      radius: 14
+      pad_all: 0
+
+    # ===== Solar oldal "holo" stilusok (Iron Man-szeru cyan panel + gombok) =====
+    # Holo panel: napenergia kartyak (PV, AKKU, HALOZAT stb.)
+    - id: style_holo_panel
+      bg_color: 0x000814
+      bg_grad_color: 0x001830
+      bg_grad_dir: VER
+      bg_opa: 75%
+      border_width: 1
+      border_color: 0x41BDF5
+      radius: 6
+      pad_all: 0
+
+    # EV INDIT gomb (zold)
+    - id: style_holo_button
+      bg_color: 0x001830
+      bg_grad_color: 0x000814
+      bg_grad_dir: VER
+      bg_opa: 85%
+      border_width: 1
+      border_color: $color_accent_green
+      radius: 6
+      pad_all: 0
+
+    # EV STOP gomb (piros)
+    - id: style_holo_button_red
+      bg_color: 0x300814
+      bg_grad_color: 0x14000A
+      bg_grad_dir: VER
+      bg_opa: 85%
+      border_width: 1
+      border_color: $color_danger
+      radius: 6
+      pad_all: 0
+
+  pages:
+    # =========================================================================
+    # PAGE_BOOT - Sajat brand-elt indito kepernyo "powered by Mikzone Boti"
+    # =========================================================================
+    # Boot-kor (on_boot) ez a kepernyo jelenik meg ~3.5 mp-ig, amig:
+    #   - WiFi csatlakozik
+    #   - HA API kapcsolat felall
+    #   - Idojaras + szenzor adatok beerkeznek
+    # Mindezt elrejti egy stilusos cyan/amber indito animacioval.
+    # A boot_sequence script lepteti a `ui_boot_bar`-t es forgatja a
+    # `ui_boot_arc`-ot.
+    # =========================================================================
+    - id: page_boot
+      bg_color: 0x000000
+      widgets:
+        # --- Halvanyan pulzalo kulso gyuru (300x280) ---
+        - arc:
+            align: CENTER
+            y: -30
+            width: 280
+            height: 280
+            start_angle: 0
+            end_angle: 360
+            rotation: 270
+            min_value: 0
+            max_value: 100
+            value: 100
+            arc_color: 0x060810
+            arc_width: 1
+            indicator: { arc_color: 0x1A2540, arc_width: 1 }
+
+        # --- Belso accent cyan gyuru (forgatott 90° szakasz - animalt) ---
+        - arc:
+            id: ui_boot_arc
+            align: CENTER
+            y: -30
+            width: 220
+            height: 220
+            start_angle: 0
+            end_angle: 90
+            rotation: 0
+            min_value: 0
+            max_value: 100
+            value: 100
+            arc_color: 0x060810
+            arc_width: 3
+            indicator: { arc_color: 0x00E5FF, arc_width: 3 }
+
+        # --- Dekorativ vizszintes vonalak a brand alatt es felett ---
+        - obj: { align: CENTER, y: -115, width: 400, height: 1, bg_color: 0x0E1220, bg_opa: COVER, border_width: 0 }
+        - obj: { align: CENTER, y: 60, width: 400, height: 1, bg_color: 0x0E1220, bg_opa: COVER, border_width: 0 }
+
+        # --- "powered by" felso felirat (halvany subtitle) ---
+        - label: { align: CENTER, y: -90, text: "powered by", text_font: font_sm, text_color: 0x2A3050, text_letter_space: 6 }
+
+        # --- MIKZONE - cyan brand cimke (Roboto Mono XL 44px) ---
+        - label: { align: CENTER, y: -45, text: "MIKZONE", text_font: font_mono_xl, text_color: 0x00E5FF, text_letter_space: 12 }
+
+        # --- BOTI - amber cimke (alatta, kisebb) ---
+        - label: { align: CENTER, y: 15, text: "BOTI", text_font: font_mono_lg, text_color: 0xFFB800, text_letter_space: 16 }
+
+        # --- Elvalaszto pont sor ---
+        - label: { align: CENTER, y: 78, text: "- - - - - - - - -", text_font: font_xs, text_color: 0x1A2540 }
+
+        # --- Tagline (szlogen) ---
+        - label: { align: CENTER, y: 100, text: "SMART HOME CONTROL PANEL", text_font: font_xs, text_color: 0x1E2840, text_letter_space: 5 }
+
+        # --- Loading bar (boot_sequence frissiti 0-100%) ---
+        - bar:
+            id: ui_boot_bar
+            align: CENTER
+            y: 160
+            width: 300
+            height: 3
+            bg_color: 0x0A0E18
+            indicator: { bg_color: 0x00E5FF }
+            min_value: 0
+            max_value: 100
+            value: 0
+
+        # --- Rendszer info (halvany - "ezzel mukodik a panel") ---
+        - label: { align: CENTER, y: 200, text: "ESP32-S3  |  LVGL  |  800x480", text_font: font_xs, text_color: 0x141828, text_letter_space: 2 }
+
+  # ===========================================================================
+  # TOP LAYER - kepernyo felett megjeleno OVERLAY elemek
+  # ---------------------------------------------------------------------------
+  # 1) Notification bar (ui_notify_bar) - 50px magas, felul
+  # 2) Main tab bar (main_tab_bar) - 48px magas, alul (6 fol oldal navigacio)
+  #
+  # A top_layer az osszes page felett van, igy ezek mindenhonnan latszanak.
+  # ===========================================================================
+  top_layer:
+    widgets:
+      # =====================================================================
+      # NOTIFICATION BAR - felso 50px ertesitosav (a show_notification mutatja)
+      # =====================================================================
+      # Tartalom: ikon balra + szoveg + X bezaras + alulhuzas
+      # Click - hide_notification (kiveve ha sticky)
+      - obj:
+          id: ui_notify_bar
+          x: 0
+          y: 0
+          width: 800
+          height: 50
+          bg_color: 0x0A0C14
+          bg_opa: 95%
+          border_width: 0
+          radius: 0
+          pad_all: 0
+          hidden: true   # Alapertelmezetten rejtett (show_notification jeleniti meg)
+          on_click:
+            - if:
+                condition: { lambda: 'return !id(notify_sticky);' }
+                then:
+                  - script.execute: hide_notification
+          widgets:
+            - label: { id: ui_notify_icon, x: 20, align: LEFT_MID, text: "\U000F0026", text_font: icons_md, text_color: $color_accent_amber }
+            - label: { id: ui_notify_text, x: 64, align: LEFT_MID, text: "", text_font: font_md, text_color: 0xFFFFFF, text_letter_space: 2 }
+            - label: { x: -20, align: RIGHT_MID, text: "\U000F0156", text_font: icons_sm, text_color: $color_subtle }
+            # Alulhuzas (accent szin a notification fontossagatol fuggoen)
+            - obj:
+                id: ui_notify_underline
+                x: 0
+                y: 48
+                width: 800
+                height: 2
+                bg_color: $color_accent_amber
+                bg_opa: COVER
+                border_width: 0
+                radius: 0
+
+      # =====================================================================
+      # MAIN TAB BAR - also 48px navigacios sav (6 ikon az oldalak kozott)
+      # =====================================================================
+      # 800px / 6 oldal = 133px gomb (utolso 134-re kerekitett ha kell).
+      # Aktiv tab: szines border felul + szines ikon/szoveg.
+      # Egy `set_tab_active(tab_index)` script kezeli a valtast.
+      - obj:
+          id: main_tab_bar
+          x: 0
+          y: 432
+          width: 800
+          height: 48
+          bg_color: 0x0D0F1C
+          bg_opa: COVER
+          border_width: 1
+          border_side: [TOP]
+          border_color: 0x1E2235
+          radius: 0
+          pad_all: 0
+          widgets:
+            - button:
+                id: btn_tab_home
+                x: 0
+                y: 0
+                width: 133
+                height: 48
+                bg_color: 0x0D0F1C
+                bg_opa: COVER
+                border_width: 2
+                border_side: [TOP]
+                border_color: $color_accent_blue
+                radius: 0
+                pad_all: 0
+                on_click:
+                  - script.execute: { id: set_tab_active, tab_index: 0 }
+                widgets:
+                  - label: { id: tab_icon_home, align: TOP_MID, y: 5, text: "\U000F02DC", text_font: icons_sm, text_color: $color_accent_blue }
+                  - label: { id: tab_text_home, align: BOTTOM_MID, y: -5, text: "KEZDOLAP", text_font: font_xs, text_color: $color_accent_blue }
+            - button:
+                id: btn_tab_air
+                x: 133
+                y: 0
+                width: 133
+                height: 48
+                bg_color: 0x0D0F1C
+                bg_opa: COVER
+                border_width: 0
+                border_side: [TOP]
+                border_color: $color_accent_green
+                radius: 0
+                pad_all: 0
+                on_click:
+                  - script.execute: { id: set_tab_active, tab_index: 1 }
+                widgets:
+                  - label: { id: tab_icon_air, align: TOP_MID, y: 5, text: "\U000F0D72", text_font: icons_sm, text_color: $color_inactive }
+                  - label: { id: tab_text_air, align: BOTTOM_MID, y: -5, text: "LEVEGO", text_font: font_xs, text_color: $color_inactive }
+            - button:
+                id: btn_tab_solar
+                x: 266
+                y: 0
+                width: 133
+                height: 48
+                bg_color: 0x0D0F1C
+                bg_opa: COVER
+                border_width: 0
+                border_side: [TOP]
+                border_color: $color_accent_amber
+                radius: 0
+                pad_all: 0
+                on_click:
+                  - script.execute: { id: set_tab_active, tab_index: 2 }
+                widgets:
+                  - label: { id: tab_icon_solar, align: TOP_MID, y: 5, text: "\U000F0599", text_font: icons_sm, text_color: $color_inactive }
+                  - label: { id: tab_text_solar, align: BOTTOM_MID, y: -5, text: "NAPENERGIA", text_font: font_xs, text_color: $color_inactive }
+            - button:
+                id: btn_tab_radar
+                x: 399
+                y: 0
+                width: 133
+                height: 48
+                bg_color: 0x0D0F1C
+                bg_opa: COVER
+                border_width: 0
+                border_side: [TOP]
+                border_color: $color_accent_purple
+                radius: 0
+                pad_all: 0
+                on_click:
+                  - script.execute: { id: set_tab_active, tab_index: 3 }
+                widgets:
+                  - label: { id: tab_icon_radar, align: TOP_MID, y: 5, text: "\U000F0437", text_font: icons_sm, text_color: $color_inactive }
+                  - label: { id: tab_text_radar, align: BOTTOM_MID, y: -5, text: "JELENLET", text_font: font_xs, text_color: $color_inactive }
+            - button:
+                id: btn_tab_lights
+                x: 532
+                y: 0
+                width: 133
+                height: 48
+                bg_color: 0x0D0F1C
+                bg_opa: COVER
+                border_width: 0
+                border_side: [TOP]
+                border_color: $color_accent_orange
+                radius: 0
+                pad_all: 0
+                on_click:
+                  - script.execute: { id: set_tab_active, tab_index: 4 }
+                widgets:
+                  - label: { id: tab_icon_lights, align: TOP_MID, y: 5, text: "\U000F0335", text_font: icons_sm, text_color: $color_inactive }
+                  - label: { id: tab_text_lights, align: BOTTOM_MID, y: -5, text: "FENYEK", text_font: font_xs, text_color: $color_inactive }
+            - button:
+                id: btn_tab_heating
+                x: 665
+                y: 0
+                width: 135
+                height: 48
+                bg_color: 0x0D0F1C
+                bg_opa: COVER
+                border_width: 0
+                border_side: [TOP]
+                border_color: $color_accent_heat
+                radius: 0
+                pad_all: 0
+                on_click:
+                  - script.execute: { id: set_tab_active, tab_index: 5 }
+                widgets:
+                  - label: { id: tab_icon_heating, align: TOP_MID, y: 5, text: "\U000F050F", text_font: icons_sm, text_color: $color_inactive }
+                  - label: { id: tab_text_heating, align: BOTTOM_MID, y: -5, text: "FUTES", text_font: font_xs, text_color: $color_inactive }

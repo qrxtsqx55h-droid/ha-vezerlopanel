@@ -1,0 +1,157 @@
+# =============================================================================
+# dashboard_43/_config.yaml
+# -----------------------------------------------------------------------------
+# KOZPONTI KONFIGURACIO
+# -----------------------------------------------------------------------------
+# Ez a fajl tartalmazza az osszes Home Assistant entitas hivatkozast es a
+# UI-ban hasznalt szineket. Ha egy entitas nevet megvaltoztattad a HA-ban,
+# csak itt kell modositani - a tobbi fajl `${entity_xxx}` substitutionokon
+# keresztul hivatkozik rajuk.
+#
+# A szineket is innen lehet kozpontilag valtoztatni - mindenhol a
+# $color_xxx vagy ${color_xxx} formaban vannak hivatkozva.
+# =============================================================================
+substitutions:
+  # ---------------------------------------------------------------------------
+  # SZINEK (HEX kodok - LVGL formatum: 0xRRGGBB)
+  # ---------------------------------------------------------------------------
+  color_bg:            "0x0A0C14"  # Sotetkek alaphatter
+  color_text_main:     "0xFFFFFF"  # Foszoveg (feher)
+  color_accent_blue:   "0x00E5FF"  # Fo accent - cyan (home tab, info)
+  color_accent_green:  "0x00FF88"  # Levego, akku, ok statusz
+  color_accent_orange: "0xFFD600"  # Lampak, sarga jelzes
+  color_accent_purple: "0x7B5CF5"  # Radar, naplemente
+  color_accent_amber:  "0xFFB800"  # Napenergia, napkelte, EV
+  color_accent_heat:   "0xFF6B35"  # Futes, kazan, meleg
+  color_inactive:      "0x3A4060"  # Inaktiv elem, halvanyitott
+  color_muted:         "0x8A90B0"  # Halvany szoveg (alcimek)
+  color_subtle:        "0x5A6080"  # Meg halvanyabb (placeholder)
+  color_danger:        "0xFF4444"  # Hiba, riasztas, off
+
+  # ---------------------------------------------------------------------------
+  # HA ENTITASOK - IDOJARAS
+  # ---------------------------------------------------------------------------
+  # A PirateWeather integraciobol szarmazo weather entitas. Innen jon a
+  # jelenlegi homerseklet, paratartalom, szel, nyomas, allapot, apparent_temp.
+  entity_weather: "weather.pirateweather"
+
+  # ---------------------------------------------------------------------------
+  # HA ENTITASOK - BELTERI KORNYEZET (nappali)
+  # ---------------------------------------------------------------------------
+  entity_indoor_temp: "sensor.nappali_homerseklet_erzekelo"   # Belteri hom (°C)
+  entity_indoor_hum:  "sensor.nappali_paratartalom_erzekelo"  # Belteri para (%)
+
+  # ---------------------------------------------------------------------------
+  # HA ENTITASOK - LEVEGOMINOSEG (Sensirion SEN55)
+  # ---------------------------------------------------------------------------
+  # A SEN55 az ESP-n keresztul integralt szenzor - lat: HA Esphome integration
+  entity_aq_pm25: "sensor.nappali_sen55_tft_pm2_5"        # PM2.5 finomprtikulum
+  entity_aq_pm10: "sensor.nappali_sen55_tft_pm10"         # PM10
+  entity_aq_voc:  "sensor.nappali_sen55_tft_voc_index"    # Illekony szerves vegyulet (0-500)
+  entity_aq_nox:  "sensor.nappali_sen55_tft_nox_index"    # Nitrogen oxidok (0-500)
+  entity_aq_temp: "sensor.nappali_sen55_tft_homerseklet"  # Belso hom a szenzorban
+  entity_aq_hum:  "sensor.nappali_sen55_tft_paratartalom" # Belso para a szenzorban
+
+  # ---------------------------------------------------------------------------
+  # HA ENTITASOK - RADAR / JELENLETERZEKELO (HLK-LD2410)
+  # ---------------------------------------------------------------------------
+  entity_radar_distance:  "sensor.nappali_sen55_tft_erzekelesi_tavolsag"  # Mert tavolsag (cm)
+  entity_ld2410_presence: "binary_sensor.nappali_sen55_tft_jelenlet"      # Van/nincs jelenlet
+
+  # ---------------------------------------------------------------------------
+  # HA ENTITASOK - NAPELEMES RENDSZER (Growatt SPF5000 ES inverter)
+  # ---------------------------------------------------------------------------
+  entity_solar_pv_power:    "sensor.growatt_spf5000_es_pv1_teljesitmeny"        # PV pillanatnyi (W)
+  entity_solar_today:       "sensor.growatt_spf5000_es_pv1_energia_ma"          # Mai termeles (kWh)
+  entity_solar_grid:        "sensor.growatt_spf5000_es_halozati_teljesitmeny_be" # Halozat (+ vesz, - ad)
+  entity_solar_battery:     "sensor.growatt_spf5000_es_akkumulator_soc"         # Akku toltottseg (%)
+  entity_solar_consumption: "sensor.growatt_spf5000_es_kimeneti_teljesitmeny"   # Aktualis fogyasztas (W)
+
+  # ---------------------------------------------------------------------------
+  # HA ENTITASOK - ELEKTROMOS AUTO (Dacia Spring - Renault integration)
+  # ---------------------------------------------------------------------------
+  entity_ev_soc:   "sensor.dacia_spring_battery"        # Auto akku toltottseg (%)
+  entity_ev_start: "button.dacia_spring_start_charge"   # Toltes inditasa
+  entity_ev_stop:  "button.dacia_spring_stop_charge"    # Toltes leallitasa
+
+  # ---------------------------------------------------------------------------
+  # HA ENTITASOK - KAZANHAZ / FUTESI RENDSZER
+  # ---------------------------------------------------------------------------
+  # Faskazanos rendszer puffer tartallyal, padlofutessel, bojlerrel.
+  entity_climate_main:    "climate.kazanhaz_faskazan_vezerlo_relle_mikzone_thermostat"  # Fo termosztat
+  entity_auto_heating:    "input_boolean.automata_futes_mod"      # Automatika BE/KI
+  entity_kazan_temp:      "sensor.kazanhaz_kazan_homerseklet"     # Kazan jelenlegi hom
+  entity_puffer_top:      "sensor.kazanhaz_puffer_felso_homerseklet"  # Puffer tartaly felso resz
+  entity_puffer_bottom:   "sensor.kazanhaz_puffer_also_homerseklet"   # Puffer tartaly also resz
+  entity_floor_temp:      "sensor.kazanhaz_padlofuttes_homerseklet"   # Padlofutes hom
+  entity_hot_water_temp:  "sensor.kazanhaz_bojler_homerseklet"        # Bojler (HMV) hom
+  entity_kazan_mq135:     "sensor.kazanhaz_legszenyezettseg_erzekelo" # CO/CO2 szenzor a kazanhazban (ppm)
+  entity_sync_padlofutes: "switch.kazanhaz_padlofuttes_kapcsolo"      # Padlofutes BE/KI
+  entity_sync_bojler:     "switch.kazanhaz_okos_ajzat_bojler"         # Bojler okos aljzat
+  entity_sync_id_bojler:  "input_boolean.bojler_manualis_boost"       # Boiler manualis felfutes
+
+  # ---------------------------------------------------------------------------
+  # HA ENTITASOK - EGYEB OKOS ESZKOZOK
+  # ---------------------------------------------------------------------------
+  entity_nappali_aljzat: "switch.nappali_okos_ajzat_1"  # Nappali altalanos okos aljzat (lampak panel - ALJZAT gomb)
+
+  # ---------------------------------------------------------------------------
+  # HA ENTITASOK - KAPU
+  # ---------------------------------------------------------------------------
+  entity_kapu_allapot: "binary_sensor.bejarati_kapu_szenzor"   # Nyitva/csukva szenzor
+  entity_kapu_toggle:  "switch.bejarati_kapu_nyito_relle"      # Nyitas/zaras rele
+
+  # ---------------------------------------------------------------------------
+  # HA ENTITASOK - 5 NAPOS IDOJARAS ELOREJELZES
+  # ---------------------------------------------------------------------------
+  # Ezek template sensorok a HA-ban, amik a weather.pirateweather forecast
+  # attributumabol jonnek. d1 = MA, d2 = HOLNAP, ... d5 = +4 nap mulva.
+  # A NAPNEVEKET (fc_d*_day) NEM hasznaljuk - helyileg szamoljuk a ha_time-bol,
+  # de a substitution itt marad ha kesobb mas megoldas kell.
+  entity_fc_d1_day:       "sensor.forecast_d1_day"
+  entity_fc_d1_condition: "sensor.forecast_d1_condition"
+  entity_fc_d1_temp_max:  "sensor.forecast_d1_tempmax"
+  entity_fc_d1_temp_min:  "sensor.forecast_d1_tempmin"
+  entity_fc_d2_day:       "sensor.forecast_d2_day"
+  entity_fc_d2_condition: "sensor.forecast_d2_condition"
+  entity_fc_d2_temp_max:  "sensor.forecast_d2_tempmax"
+  entity_fc_d2_temp_min:  "sensor.forecast_d2_tempmin"
+  entity_fc_d3_day:       "sensor.forecast_d3_day"
+  entity_fc_d3_condition: "sensor.forecast_d3_condition"
+  entity_fc_d3_temp_max:  "sensor.forecast_d3_tempmax"
+  entity_fc_d3_temp_min:  "sensor.forecast_d3_tempmin"
+  entity_fc_d4_day:       "sensor.forecast_d4_day"
+  entity_fc_d4_condition: "sensor.forecast_d4_condition"
+  entity_fc_d4_temp_max:  "sensor.forecast_d4_tempmax"
+  entity_fc_d4_temp_min:  "sensor.forecast_d4_tempmin"
+  entity_fc_d5_day:       "sensor.forecast_d5_day"
+  entity_fc_d5_condition: "sensor.forecast_d5_condition"
+  entity_fc_d5_temp_max:  "sensor.forecast_d5_tempmax"
+  entity_fc_d5_temp_min:  "sensor.forecast_d5_tempmin"
+
+  # ---------------------------------------------------------------------------
+  # HA ENTITASOK - LAMPAK
+  # ---------------------------------------------------------------------------
+  # 10 db lampa (szobakhoz) - mind toggle kapcsolokent kezelve.
+  # A FURDO eseten ket lamp van egy gombhoz: kacsolas mindketto egyszerre.
+  entity_light_living:       "light.nappali_fali_kapcsolo_wall_switch"
+  entity_light_kitchen:      "light.konyha_fali_kapcsolo_wall_switch"
+  entity_light_furdo:        "light.furdoszoba_fali_kapcsolo_wall_switch_switch1"   # Furdo lampa 1 (allapot kovetes)
+  entity_light_furdo2:       "light.furdoszoba_fali_kapcsolo_wall_switch_switch2"   # Furdo lampa 2 (allapot kovetes)
+  entity_light_furdo_toggle: "light.furdoszoba_fali_kapcsolo_wall_switch_switch1, light.furdoszoba_fali_kapcsolo_wall_switch_switch2"  # Kombinalt (toggle 2 lampaval)
+  entity_light_ilka:         "light.ilka_fali_kapcsolo_wall_switch"
+  entity_light_kincso:       "light.kincso_fali_kapcsolo_wall_switch"
+  entity_light_balazs:       "light.balazs_szoba_fali_kapcsolo_wall_switch"
+  entity_light_lenti_elo:    "light.lenti_eloszoba_fali_kapcsolo"
+  entity_light_lepcso:       "light.lepcsohaz_fali_kapcsolo"
+  entity_light_fenti_elo:    "light.fenti_eloszoba_fali_kapcsolo_relay_controler_switch"
+  entity_light_fenti_furdo:  "light.fenti_mosdo_fali_kapcsolo"
+
+  # Hangulat lampak (lampak panel teteje - scene gombok)
+  entity_scene_yeelight:     "light.yeelight"                              # Yeelight okos izzo
+  entity_scene_neopixel:     "light.neopixel_led_ring_led_ring"            # NeoPixel LED gyuru
+
+  # MEGJEGYZES: a "MIND KI" gomb mar nem hasznal kulon entitas-listat -
+  # a lights.yaml-ban a `light.turn_off` szolgaltatas `entity_id: all`
+  # parameterrel egyetlen paranccsal kapcsol le minden light entitast.
+  # (A hattervilagitas switch, igy azt nem erinti.)

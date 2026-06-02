@@ -1,0 +1,391 @@
+# =============================================================================
+# dashboard_43/solar_ev.yaml
+# -----------------------------------------------------------------------------
+# NAPENERGIA + EV OLDAL (page_solar) - tab bar 2. index
+# -----------------------------------------------------------------------------
+# Tartalom (Iron Man-szeru "holo" stilus, cyan accent):
+#   - MA TERMELT: kWh osszesen (sarga)
+#   - PV TERMELES: pillanatnyi W (kek)
+#   - FOGYASZTAS: pillanatnyi W (kek)
+#   - AKKU SOC: % toltottseg (zold)
+#   - HALOZAT: + vesz vagy - ad (lila)
+#   - EV TOLTOTTSEG: Dacia Spring % (sarga)
+#   - INDIT / STOP gombok (EV toltes manualis vezerles)
+#
+# ANIMACIO (4 mozgo pont a kartyak kozott - "flow" jelzes):
+#   - PV -> FOGYASZTAS (sarga): napenergia hasznalat
+#   - AKKU -> FOGYASZTAS (zold): akkurol jovo aram
+#   - HALOZAT -> FOGYASZTAS (kek): halozatrol veszunk
+#   - FOGYASZTAS -> HALOZAT (zold): halozatra adunk (visszadijazas)
+#
+# Adatforras: Growatt SPF5000 ES inverter (Modbus / HA Growatt integration)
+#           + Dacia Spring (Renault integration)
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# GLOBALIS VALTOZOK (aktualis ertekek + animacio state)
+# -----------------------------------------------------------------------------
+# Ezek azert kellenek, mert az animate_flow_dots script vezerli a pottyok
+# lathatosagat is, az ertek alapjan (pl. akku pont csak akkor latszik, ha
+# az akkurol tenyleg fogy aram - PV nem elegseges + halozat nem ad).
+globals:
+  - id: solar_pv_val
+    type: float
+    restore_value: false
+    initial_value: "0.0"
+  - id: solar_grid_val
+    type: float
+    restore_value: false
+    initial_value: "0.0"
+  - id: solar_consumption_val
+    type: float
+    restore_value: false
+    initial_value: "0.0"
+  - id: solar_battery_val
+    type: float
+    restore_value: false
+    initial_value: "0.0"
+  - id: flow_progress
+    type: float
+    restore_value: false
+    initial_value: "0.0"
+
+# -----------------------------------------------------------------------------
+# ANIMATE_FLOW_DOTS - 4 mozgo pont a kartyak kozott (vizualis aram-aramlas)
+# -----------------------------------------------------------------------------
+# Egy 150ms-onkenti interval hivja. Minden tick a flow_progress floatat
+# nyojti 0->1 (3 mp / ciklus), majd a 4 pottyot interpolalja az ut menten
+# (kezdo -> vegpontok kozott linearisan).
+# A pottyok feltetelesen latszanak (csak ha az adott aramlas tenyleg
+# aktiv egy 50W threshold-fokon at):
+#   - PV pont: napenergia > 50W
+#   - AKKU pont: fogyasztas > PV + 100W es halozat < 50W es akku > 5%
+#   - HALOZAT BE: halozati teljesitmeny > 50W (vesz)
+#   - HALOZAT KI: halozati teljesitmeny < -50W (ad)
+script:
+  - id: animate_flow_dots
+    then:
+      - lambda: |-
+          // Progress lepteto (3 mp alatt megy 0 -> 1, majd visszaall 0-ra)
+          id(flow_progress) += 0.05f;
+          if (id(flow_progress) >= 1.0f) id(flow_progress) = 0.0f;
+          float p = id(flow_progress);
+
+          float pv = id(solar_pv_val);
+          float grid = id(solar_grid_val);
+          float cons = id(solar_consumption_val);
+
+          // === 1. PV -> FOGYASZTAS (sarga) ===
+          // PV TERMELES kartya jobb-fent (~220, 173) -> FOGYASZTAS kartya bal-also (~400, 76)
+          bool pv_active = pv > 50.0f;
+          if (pv_active) {
+            int x = (int)(220.0f + (400.0f - 220.0f) * p) - 5;
+            int y = (int)(173.0f + (76.0f - 173.0f) * p) - 5;
+            lv_obj_set_pos(id(flow_dot_pv), x, y);
+            lv_obj_clear_flag(id(flow_dot_pv), LV_OBJ_FLAG_HIDDEN);
+          } else {
+            lv_obj_add_flag(id(flow_dot_pv), LV_OBJ_FLAG_HIDDEN);
+          }
+
+          // === 2. AKKU -> FOGYASZTAS (zold) ===
+          // AKKU SOC kartya teteje (~307, 356) -> FOGYASZTAS kartya kozepe (~477, 45)
+          // Akkor latszik, ha PV nem elegseges es a halozat sem ad
+          bool akku_active = (cons > pv + 100.0f) && (grid < 50.0f) && (id(solar_battery_val) > 5.0f);
+          if (akku_active) {
+            int x = (int)(307.0f + (477.0f - 307.0f) * p) - 5;
+            int y = (int)(356.0f + (45.0f - 356.0f) * p) - 5;
+            lv_obj_set_pos(id(flow_dot_akku), x, y);
+            lv_obj_clear_flag(id(flow_dot_akku), LV_OBJ_FLAG_HIDDEN);
+          } else {
+            lv_obj_add_flag(id(flow_dot_akku), LV_OBJ_FLAG_HIDDEN);
+          }
+
+          // === 3. HALOZAT -> FOGYASZTAS (kek) - VESZ a halozatrol ===
+          // HALOZAT kartya bal (~590, 121) -> FOGYASZTAS kartya jobb (~555, 45)
+          bool grid_in = grid > 50.0f;
+          if (grid_in) {
+            int x = (int)(590.0f + (477.0f - 590.0f) * p) - 5;
+            int y = (int)(121.0f + (45.0f - 121.0f) * p) - 5;
+            lv_obj_set_pos(id(flow_dot_grid_in), x, y);
+            lv_obj_clear_flag(id(flow_dot_grid_in), LV_OBJ_FLAG_HIDDEN);
+          } else {
+            lv_obj_add_flag(id(flow_dot_grid_in), LV_OBJ_FLAG_HIDDEN);
+          }
+
+          // === 4. FOGYASZTAS -> HALOZAT (zold) - VISSZAAD a halozatra ===
+          // FOGYASZTAS kartya (~555, 45) -> HALOZAT kartya (~590, 121)
+          bool grid_out = grid < -50.0f;
+          if (grid_out) {
+            int x = (int)(477.0f + (590.0f - 477.0f) * p) - 5;
+            int y = (int)(45.0f + (121.0f - 45.0f) * p) - 5;
+            lv_obj_set_pos(id(flow_dot_grid_out), x, y);
+            lv_obj_clear_flag(id(flow_dot_grid_out), LV_OBJ_FLAG_HIDDEN);
+          } else {
+            lv_obj_add_flag(id(flow_dot_grid_out), LV_OBJ_FLAG_HIDDEN);
+          }
+
+# -----------------------------------------------------------------------------
+# IDOZITO - 150ms-onkenti flow animacio (3 mp / 1 teljes ut)
+# -----------------------------------------------------------------------------
+# Folyamatosan fut akkor is ha mas oldalon vagyunk (a pottyok hidden flaggel
+# vannak elrejtve - igy gyorsabb mint vissza kapcsolni az animaciot).
+interval:
+  - interval: 150ms
+    then:
+      - script.execute: animate_flow_dots
+
+# -----------------------------------------------------------------------------
+# SZENZOROK (Growatt inverter + Dacia Spring HA-bol)
+# -----------------------------------------------------------------------------
+# A teljesitmenyeket Watt-bol kW-ba konvertaljuk (x / 1000.0f) a kijelzeshez,
+# de a globalis valtozokba a NYERS Watt ertek kerul - mert az animate_flow_dots
+# threshold-feltetelei W-ban vannak megadva.
+sensor:
+  # PV pillanatnyi teljesitmeny (W)
+  # Riasztas: > 4kW -> "MAX NAPENERGIA TERMELES" notification
+  - platform: homeassistant
+    id: solar_pv_power
+    entity_id: "${entity_solar_pv_power}"
+    on_value:
+      then:
+        - lvgl.label.update: { id: ui_solar_main, text: !lambda 'return str_sprintf("%.1f", x / 1000.0f);' }
+        - lambda: 'id(solar_pv_val) = x;'
+        - if:
+            condition: { lambda: 'return x > 4000.0;' }
+            then:
+              - script.execute:
+                  id: show_notification
+                  message: "MAX NAPENERGIA TERMELES"
+                  icon: "\U000F0A6D"
+                  color: 0x00FF88
+                  sticky: false
+
+  - platform: homeassistant
+    id: solar_today
+    entity_id: "${entity_solar_today}"
+    on_value:
+      then:
+        - lvgl.label.update: { id: ui_solar_today, text: !lambda 'return str_sprintf("%.1f", x);' }
+
+  - platform: homeassistant
+    id: solar_grid
+    entity_id: "${entity_solar_grid}"
+    on_value:
+      then:
+        - lvgl.label.update:
+            id: ui_flow_grid
+            text: !lambda 'return x > 0 ? str_sprintf("v %.1f kW", x / 1000.0f) : str_sprintf("^ %.1f kW", -x / 1000.0f);'
+        - lambda: 'id(solar_grid_val) = x;'
+
+  - platform: homeassistant
+    id: solar_battery
+    entity_id: "${entity_solar_battery}"
+    on_value:
+      then:
+        - lvgl.label.update: { id: ui_solar_batt, text: !lambda 'return str_sprintf("%.0f", x);' }
+        - lambda: 'id(solar_battery_val) = x;'
+        - if:
+            condition: { lambda: 'return x < 20.0;' }
+            then:
+              - script.execute:
+                  id: show_notification
+                  message: "AKKU LEMEROL"
+                  icon: "\U000F008E"
+                  color: 0xFFD600
+                  sticky: false
+
+  - platform: homeassistant
+    id: solar_consumption
+    entity_id: "${entity_solar_consumption}"
+    on_value:
+      then:
+        - lvgl.label.update: { id: ui_flow_home, text: !lambda 'return str_sprintf("%.1f kW", x / 1000.0f);' }
+        - lambda: 'id(solar_consumption_val) = x;'
+
+  - platform: homeassistant
+    id: ev_soc
+    entity_id: "${entity_ev_soc}"
+    on_value:
+      then:
+        - lvgl.label.update: { id: ui_ev_soc, text: !lambda 'return str_sprintf("%.0f", x);' }
+
+# =============================================================================
+# UI - PAGE_SOLAR (napenergia + EV oldal)
+# =============================================================================
+# Layout: hatterkep + 6 holo-stilusu kartya specifikus poziciokban
+# (a pozici az animate_flow_dots-ban hard-codeolva van a pottyok mozgashoz!)
+lvgl:
+  pages:
+    - id: page_solar
+      bg_color: 0x000000
+      widgets:
+        - image: { src: bg_solar, x: 0, y: 0 }
+
+        # ------------- MA TERMELT kartya -------------
+        - obj:
+            x: 75
+            y: 72
+            width: 145
+            height: 62
+            styles: style_holo_panel
+            widgets:
+              - label: { x: 8, y: 6, text: "MA TERMELT", text_font: font_md, text_color: $color_accent_amber, text_letter_space: 1 }
+              - label: { id: ui_solar_today, x: 8, y: 30, text: "0.0", text_font: font_mono_lg, text_color: 0xFFFFFF }
+              - label: { x: 92, y: 36, text: "kWh", text_font: font_sm, text_color: 0xFFD680 }
+
+        # ------------- PV TERMELES kartya -------------
+        - obj:
+            x: 75
+            y: 142
+            width: 145
+            height: 62
+            styles: style_holo_panel
+            widgets:
+              - label: { x: 8, y: 6, text: "PV TERMELES", text_font: font_md, text_color: 0x41BDF5, text_letter_space: 1 }
+              - label: { id: ui_solar_main, x: 8, y: 30, text: "0.0", text_font: font_mono_lg, text_color: 0xFFFFFF }
+              - label: { x: 97, y: 36, text: "kW", text_font: font_sm, text_color: 0x8AC4F0 }
+
+        # ------------- FOGYASZTAS kartya -------------
+        - obj:
+            x: 400
+            y: 14
+            width: 155
+            height: 62
+            styles: style_holo_panel
+            widgets:
+              - label: { x: 8, y: 6, text: "FOGYASZTAS", text_font: font_md, text_color: 0x41BDF5, text_letter_space: 1 }
+              - label: { id: ui_flow_home, x: 8, y: 30, text: "0.0 kW", text_font: font_mono_lg, text_color: 0xFFFFFF }
+
+        # ------------- AKKU SOC kartya -------------
+        - obj:
+            x: 245
+            y: 356
+            width: 125
+            height: 62
+            styles: style_holo_panel
+            widgets:
+              - label: { x: 8, y: 6, text: "AKKU SOC", text_font: font_md, text_color: $color_accent_green, text_letter_space: 1 }
+              - label: { id: ui_solar_batt, x: 8, y: 30, text: "--", text_font: font_mono_lg, text_color: 0xFFFFFF }
+              - label: { x: 78, y: 36, text: "%", text_font: font_sm, text_color: 0x8AFFB8 }
+
+        # ------------- HALOZAT kartya -------------
+        - obj:
+            x: 590
+            y: 90
+            width: 155
+            height: 62
+            styles: style_holo_panel
+            widgets:
+              - label: { x: 8, y: 6, text: "HALOZAT", text_font: font_md, text_color: $color_accent_purple, text_letter_space: 1 }
+              - label: { id: ui_flow_grid, x: 8, y: 30, text: "-- kW", text_font: font_mono_lg, text_color: 0xFFFFFF }
+
+        # ------------- EV TOLTOTTSEG kartya -------------
+        - obj:
+            x: 630
+            y: 214
+            width: 155
+            height: 62
+            styles: style_holo_panel
+            widgets:
+              - label: { x: 8, y: 6, text: "EV TOLTOTTSEG", text_font: font_md, text_color: $color_accent_amber, text_letter_space: 1 }
+              - label: { id: ui_ev_soc, x: 8, y: 30, text: "--", text_font: font_mono_lg, text_color: 0xFFFFFF }
+              - label: { x: 108, y: 36, text: "%", text_font: font_sm, text_color: 0xFFD680 }
+
+        # ------------- INDIT button -------------
+        - button:
+            id: btn_ev_start
+            x: 630
+            y: 290
+            width: 155
+            height: 38
+            styles: style_holo_button
+            on_click:
+              - homeassistant.service:
+                  service: script.turn_on
+                  data: { entity_id: "${entity_ev_start}" }
+            widgets:
+              - label: { align: LEFT_MID, x: 12, text: "\U000F0241", text_font: icons_sm, text_color: $color_accent_green }
+              - label: { align: CENTER, x: 14, text: "INDIT", text_font: font_md, text_color: $color_accent_green, text_letter_space: 1 }
+
+        # ------------- STOP button -------------
+        - button:
+            id: btn_ev_stop
+            x: 630
+            y: 336
+            width: 155
+            height: 38
+            styles: style_holo_button_red
+            on_click:
+              - homeassistant.service:
+                  service: script.turn_on
+                  data: { entity_id: "${entity_ev_stop}" }
+            widgets:
+              - label: { align: LEFT_MID, x: 12, text: "\U000F0425", text_font: icons_sm, text_color: $color_danger }
+              - label: { align: CENTER, x: 14, text: "STOP", text_font: font_md, text_color: $color_danger, text_letter_space: 1 }
+
+        # =============================================================
+        # FLOW POTTYOK - 4 animalt pötty kartyak kozotti aramlashoz
+        # =============================================================
+        # 1. PV -> FOGYASZTAS (sarga, napenergia)
+        - obj:
+            id: flow_dot_pv
+            x: -20
+            y: -20
+            width: 10
+            height: 10
+            bg_color: 0xFFD600
+            bg_opa: COVER
+            radius: 5
+            border_width: 0
+            shadow_color: 0xFFD600
+            shadow_width: 8
+            shadow_opa: 80%
+            hidden: true
+
+        # 2. AKKU -> FOGYASZTAS (zold, akku ad)
+        - obj:
+            id: flow_dot_akku
+            x: -20
+            y: -20
+            width: 10
+            height: 10
+            bg_color: 0x00FF88
+            bg_opa: COVER
+            radius: 5
+            border_width: 0
+            shadow_color: 0x00FF88
+            shadow_width: 8
+            shadow_opa: 80%
+            hidden: true
+
+        # 3. HALOZAT -> FOGYASZTAS (kek, vesz a halozatrol)
+        - obj:
+            id: flow_dot_grid_in
+            x: -20
+            y: -20
+            width: 10
+            height: 10
+            bg_color: 0x41BDF5
+            bg_opa: COVER
+            radius: 5
+            border_width: 0
+            shadow_color: 0x41BDF5
+            shadow_width: 8
+            shadow_opa: 80%
+            hidden: true
+
+        # 4. FOGYASZTAS -> HALOZAT (zold, ad a halozatra)
+        - obj:
+            id: flow_dot_grid_out
+            x: -20
+            y: -20
+            width: 10
+            height: 10
+            bg_color: 0x00FF88
+            bg_opa: COVER
+            radius: 5
+            border_width: 0
+            shadow_color: 0x00FF88
+            shadow_width: 8
+            shadow_opa: 80%
+            hidden: true

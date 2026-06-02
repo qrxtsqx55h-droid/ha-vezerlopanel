@@ -1,0 +1,430 @@
+# =============================================================================
+# dashboard_43/heating.yaml
+# -----------------------------------------------------------------------------
+# FUTES OLDAL (page_heating) - tab bar 5. index
+# -----------------------------------------------------------------------------
+# Tartalom:
+#   - BAL kartya: TERMOSZTAT
+#       - Power gomb (heat / off toggle)
+#       - Nagy arc (cel hom 20.5-22.0°C tartomanyban)
+#       - HVAC action status (FUTES AKTIV / CELHOM ELERVE / KIKAPCSOLVA)
+#       - Cel homerseklet (font_mono_huge)
+#       - Aktualis homerseklet (a nappali szenzorbol)
+#       - +/- gombok a cel hom allitasahoz (0.5°C lepessel)
+#       - PRESET (away/comfort/eco/home/sleep) + AUTO MOD kapcsolo
+#
+#   - JOBB kartya: KAZANHAZ VEZERLES
+#       - 3 kapcsolo: PADLOFUTES, BOJLER, IDEIGLENES BOJLER
+#       - 5 ertekkijelzes: kazan, puffer felso, puffer also, padlo, melegviz, legszennytseg
+#
+# Riasztas:
+#   - Kazan > 85°C: "KAZAN TULMELEG" notification (piros)
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# GLOBALIS VALTOZOK
+# -----------------------------------------------------------------------------
+globals:
+  # Cel homerseklet (perzisztens - restore_value: true).
+  # Tartomany: 20.5 - 22.0°C (clampelve a +/- gombokban)
+  - id: target_temp
+    type: float
+    restore_value: true
+    initial_value: "21.0"
+
+# -----------------------------------------------------------------------------
+# SCRIPTEK
+# -----------------------------------------------------------------------------
+script:
+  # REFRESH_THERMOSTAT_UI - target_temp valtozas utan a UI frissitese
+  # Hivva: +/- gombokrol, valamint a HA-bol jovo target_temp valtoztataskor.
+  # Az arc value*10 (mert az LVGL arc only int-ek, igy x.5 hom = (int)(x.5 * 10))
+  - id: refresh_thermostat_ui
+    then:
+      - lvgl.label.update: { id: ui_target_temp_lbl, text: !lambda 'return str_sprintf("%.1f", id(target_temp));' }
+      - lvgl.arc.update:   { id: ui_temp_arc, value: !lambda 'return (int)(id(target_temp) * 10);' }
+
+# -----------------------------------------------------------------------------
+# SZENZOROK
+# -----------------------------------------------------------------------------
+sensor:
+  - platform: homeassistant
+    id: kazan_temp
+    entity_id: "${entity_kazan_temp}"
+    on_value:
+      then:
+        - lvgl.label.update: { id: ui_kazan_val, text: !lambda 'return str_sprintf("%.1f°C", x);' }
+        - if:
+            condition: { lambda: 'return x > 85.0;' }
+            then:
+              - script.execute:
+                  id: show_notification
+                  message: "KAZAN TULMELEG"
+                  icon: "\U000F0238"
+                  color: 0xFF4444
+                  sticky: false
+  - platform: homeassistant
+    id: puffer_top
+    entity_id: "${entity_puffer_top}"
+    on_value:
+      then:
+        - lvgl.label.update: { id: ui_puffer_top_val, text: !lambda 'return str_sprintf("%.1f°C", x);' }
+  - platform: homeassistant
+    id: puffer_bottom
+    entity_id: "${entity_puffer_bottom}"
+    on_value:
+      then:
+        - lvgl.label.update: { id: ui_puffer_bot_val, text: !lambda 'return str_sprintf("%.1f°C", x);' }
+  - platform: homeassistant
+    id: floor_temp
+    entity_id: "${entity_floor_temp}"
+    on_value:
+      then:
+        - lvgl.label.update: { id: ui_floor_val, text: !lambda 'return str_sprintf("%.1f°C", x);' }
+  - platform: homeassistant
+    id: hot_water_temp
+    entity_id: "${entity_hot_water_temp}"
+    on_value:
+      then:
+        - lvgl.label.update: { id: ui_hotwater_val, text: !lambda 'return str_sprintf("%.1f°C", x);' }
+  - platform: homeassistant
+    id: kazan_mq135
+    entity_id: ${entity_kazan_mq135}
+    on_value:
+      then:
+        - lvgl.label.update: { id: ui_kazan_mq_val, text: !lambda 'return str_sprintf("%.0f ppm", x);' }
+
+  # --- TERMOSZTAT ATTRIBUTOK ---
+  # Cel homerseklet (target temp) - clamping 20.5-22.0
+  - platform: homeassistant
+    id: target_temp_from_ha
+    entity_id: "${entity_climate_main}"
+    attribute: temperature
+    on_value:
+      then:
+        - lambda: |-
+            if (!isnan(x) && x >= 20.5 && x <= 22.0) {
+              id(target_temp) = x;
+            }
+        - script.execute: refresh_thermostat_ui
+
+  # Aktualis homerseklet a termosztatbol (current_temperature)
+  - platform: homeassistant
+    id: current_temp_from_ha
+    entity_id: "${entity_climate_main}"
+    attribute: current_temperature
+    on_value:
+      then:
+        - lvgl.label.update: { id: ui_current_temp_lbl, text: !lambda 'return str_sprintf("%.1f °C", x);' }
+
+# -----------------------------------------------------------------------------
+# TEXT SZENZOROK (HVAC mode, action, preset - mind ugyanabbol az entitybol)
+# -----------------------------------------------------------------------------
+text_sensor:
+  # HVAC mode (heat / off) - frissiti a power gomb szinet
+  # heat -> piros (futes aktiv), off -> szurke (inaktiv)
+  - platform: homeassistant
+    id: hvac_mode_state
+    entity_id: "${entity_climate_main}"
+    on_value:
+      then:
+        - lvgl.widget.update:
+            id: btn_thermostat_power
+            border_color: !lambda |-
+              return x == "heat" ? lv_color_hex(0xFF6B35) : lv_color_hex(0x5A6080);
+        - lvgl.label.update:
+            id: icon_thermostat_power
+            text_color: !lambda |-
+              return x == "heat" ? lv_color_hex(0xFF6B35) : lv_color_hex(0x5A6080);
+
+  # HVAC action (heating / idle / off) - status szoveg + arc szin
+  - platform: homeassistant
+    id: hvac_action_state
+    entity_id: "${entity_climate_main}"
+    attribute: hvac_action
+    on_value:
+      then:
+        - lvgl.label.update:
+            id: ui_hvac_action_lbl
+            text: !lambda |-
+              if (x == "heating") return std::string("FUTES AKTIV");
+              if (x == "idle") return std::string("CELHOM ELERVE");
+              if (x == "off") return std::string("KIKAPCSOLVA");
+              return std::string("--");
+            text_color: !lambda |-
+              if (x == "heating") return lv_color_hex(0xFF6B35);
+              if (x == "idle") return lv_color_hex(0x00FF88);
+              return lv_color_hex(0x5A6080);
+        - lvgl.arc.update:
+            id: ui_temp_arc
+            indicator:
+              arc_color: !lambda |-
+                if (x == "heating") return lv_color_hex(0xFF6B35);
+                if (x == "idle") return lv_color_hex(0x00FF88);
+                return lv_color_hex(0x5A6080);
+
+  # Preset mode (away / comfort / eco / home / sleep / none)
+  - platform: homeassistant
+    id: preset_mode_state
+    entity_id: "${entity_climate_main}"
+    attribute: preset_mode
+    on_value:
+      then:
+        - lvgl.label.update:
+            id: ui_preset_lbl
+            text: !lambda |-
+              if (x == "away") return std::string("TAVOL");
+              if (x == "comfort") return std::string("KOMFORT");
+              if (x == "eco") return std::string("ECO");
+              if (x == "home") return std::string("OTTHON");
+              if (x == "sleep") return std::string("ALVAS");
+              if (x == "none") return std::string("ALAP");
+              return std::string("--");
+            text_color: !lambda |-
+              if (x == "away") return lv_color_hex(0x7B5CF5);
+              if (x == "sleep") return lv_color_hex(0x41BDF5);
+              if (x == "comfort") return lv_color_hex(0xFF6B35);
+              if (x == "eco") return lv_color_hex(0x00FF88);
+              return lv_color_hex(0xFFFFFF);
+
+# -----------------------------------------------------------------------------
+# BINARY SENZOROK (HA-bol szinkronizacio - HA <-> panel UI tukrozodas)
+# -----------------------------------------------------------------------------
+# Ha valaki a HA-bol vagy mas eszkozrol valtoztatja a switch-eket, az UI
+# tukrozze. Forditva: a UI switch onValue homeassistant.service-szel valtoztat.
+binary_sensor:
+  # Futes vezerles kapcsolok szinkron (jobb kartya 3 switch-je)
+  - platform: homeassistant
+    id: sync_padlofutes
+    entity_id: "${entity_sync_padlofutes}"
+    on_state:
+      then: [ lvgl.widget.update: { id: sw_padlofutes, state: { checked: !lambda 'return x;' } } ]
+  - platform: homeassistant
+    id: sync_bojler
+    entity_id: "${entity_sync_bojler}"
+    on_state:
+      then: [ lvgl.widget.update: { id: sw_bojler, state: { checked: !lambda 'return x;' } } ]
+  - platform: homeassistant
+    id: sync_ideiglenes_bojler
+    entity_id: "${entity_sync_id_bojler}"
+    on_state:
+      then: [ lvgl.widget.update: { id: sw_id_bojler, state: { checked: !lambda 'return x;' } } ]
+
+  # Auto futes mod helper szinkron
+  - platform: homeassistant
+    id: auto_heating_sync
+    entity_id: "${entity_auto_heating}"
+    on_state:
+      then: [ lvgl.widget.update: { id: sw_auto_heating, state: { checked: !lambda 'return x;' } } ]
+
+# =============================================================================
+# UI - PAGE_HEATING (futes vezerles)
+# =============================================================================
+# Layout: 2 kartya egymas mellett (380 + 380 px szelesseg)
+lvgl:
+  pages:
+    - id: page_heating
+      bg_color: 0x000000
+      widgets:
+        - image: { src: bg_home_img, x: 0, y: 0 }
+
+        # =====================================================
+        # BAL KARTYA - TERMOSZTAT
+        # =====================================================
+        - obj:
+            x: 15
+            y: 15
+            width: 380
+            height: 400
+            styles: style_card
+            bg_opa: 60%
+            widgets:
+              - label: { x: 20, y: 15, text: "TERMOSZTAT", text_font: font_xs, text_color: $color_accent_heat, text_letter_space: 2 }
+
+              # --- POWER GOMB (heat <-> off toggle) ---
+              - button:
+                  id: btn_thermostat_power
+                  x: 320
+                  y: 10
+                  width: 40
+                  height: 32
+                  bg_color: 0x10131F
+                  border_width: 2
+                  border_color: $color_inactive
+                  radius: 8
+                  on_click:
+                    - if:
+                        condition:
+                          lambda: 'return id(hvac_mode_state).state == "heat";'
+                        then:
+                          - homeassistant.service:
+                              service: climate.set_hvac_mode
+                              data:
+                                entity_id: "${entity_climate_main}"
+                                hvac_mode: "off"
+                        else:
+                          - homeassistant.service:
+                              service: climate.set_hvac_mode
+                              data:
+                                entity_id: "${entity_climate_main}"
+                                hvac_mode: "heat"
+                  widgets:
+                    - label: { id: icon_thermostat_power, align: CENTER, text: "\U000F0425", text_font: icons_sm, text_color: $color_inactive }
+
+              # --- ARC ---
+              - arc:
+                  id: ui_temp_arc
+                  align: CENTER
+                  y: 10
+                  width: 280
+                  height: 280
+                  start_angle: 135
+                  end_angle: 45
+                  min_value: 205
+                  max_value: 220
+                  value: 210
+                  arc_color: 0x1E2235
+                  arc_width: 18
+                  indicator: { arc_color: 0x5A6080, arc_width: 18 }
+
+              # --- HVAC ACTION STATUS (FUTES AKTIV / CELHOM ELERVE / KIKAPCSOLVA) ---
+              - label: { id: ui_hvac_action_lbl, align: CENTER, y: -65, text: "--", text_font: font_md, text_color: $color_muted, text_letter_space: 2 }
+
+              # --- CEL HOM ---
+              - label: { id: ui_target_temp_lbl, align: CENTER, y: -10, text: "21.0", text_font: font_mono_huge, text_color: 0xFFFFFF }
+              - label: { align: CENTER, x: 80, y: -25, text: "°C", text_font: font_mono_lg, text_color: $color_muted }
+
+              # --- AKTUALIS HOM ---
+              - label: { align: CENTER, x: -35, y: 55, text: "\U000F050F", text_font: icons_sm, text_color: $color_muted }
+              - label: { id: ui_current_temp_lbl, align: CENTER, x: 10, y: 55, text: "-- °C", text_font: font_md, text_color: 0xFFFFFF }
+
+              # --- MINUS GOMB ---
+              - button:
+                  x: 100
+                  y: 305
+                  width: 60
+                  height: 60
+                  radius: 30
+                  bg_color: 0x10131F
+                  border_width: 1
+                  border_color: $color_inactive
+                  on_click:
+                    - lambda: |-
+                        float new_val = id(target_temp) - 0.5f;
+                        if (new_val < 20.5f) new_val = 20.5f;
+                        id(target_temp) = new_val;
+                    - script.execute: refresh_thermostat_ui
+                    - homeassistant.service:
+                        service: climate.set_temperature
+                        data:
+                          entity_id: "${entity_climate_main}"
+                          temperature: !lambda 'return id(target_temp);'
+                  widgets: [ label: { align: CENTER, text: "-", text_font: font_mono_lg, text_color: 0xFFFFFF } ]
+
+              # --- PLUSZ GOMB ---
+              - button:
+                  x: 220
+                  y: 305
+                  width: 60
+                  height: 60
+                  radius: 30
+                  bg_color: 0x10131F
+                  border_width: 1
+                  border_color: $color_inactive
+                  on_click:
+                    - lambda: |-
+                        float new_val = id(target_temp) + 0.5f;
+                        if (new_val > 22.0f) new_val = 22.0f;
+                        id(target_temp) = new_val;
+                    - script.execute: refresh_thermostat_ui
+                    - homeassistant.service:
+                        service: climate.set_temperature
+                        data:
+                          entity_id: "${entity_climate_main}"
+                          temperature: !lambda 'return id(target_temp);'
+                  widgets: [ label: { align: CENTER, text: "+", text_font: font_mono_lg, text_color: 0xFFFFFF } ]
+
+              # --- ALSO SAV: PRESET + AUTO MOD ---
+              - line: { points: ["15,370", "365,370"], line_color: 0x242A40, line_width: 1 }
+              - label: { x: 20, y: 378, text: "PRESET:", text_font: font_xs, text_color: $color_muted, text_letter_space: 1 }
+              - label: { id: ui_preset_lbl, x: 65, y: 376, text: "--", text_font: font_sm, text_color: 0xFFFFFF, text_letter_space: 2 }
+              - label: { x: 200, y: 378, text: "AUTO MOD", text_font: font_xs, text_color: $color_muted, text_letter_space: 1 }
+              - switch:
+                  id: sw_auto_heating
+                  x: 315
+                  y: 372
+                  width: 50
+                  height: 24
+                  on_value:
+                    - if:
+                        condition: { lambda: 'return x;' }
+                        then: [ homeassistant.service: { service: input_boolean.turn_on,  data: { entity_id: "${entity_auto_heating}" } } ]
+                        else: [ homeassistant.service: { service: input_boolean.turn_off, data: { entity_id: "${entity_auto_heating}" } } ]
+
+        # =====================================================
+        # JOBB KARTYA - KAZANHAZ VEZERLES (valtozatlan)
+        # =====================================================
+        - obj:
+            x: 405
+            y: 15
+            width: 380
+            height: 400
+            styles: style_card
+            bg_opa: 60%
+            widgets:
+              - label: { align: TOP_MID, y: 15, text: "KAZANHAZ VEZERLES", text_font: font_xs, text_color: $color_accent_heat, text_letter_space: 2 }
+              - label: { x: 20, y: 55, text: "PADLOFUTES", text_font: font_md, text_color: 0xFFFFFF }
+              - switch:
+                  id: sw_padlofutes
+                  x: 280
+                  y: 50
+                  width: 60
+                  height: 30
+                  on_value:
+                    - if:
+                        condition: { lambda: 'return x;' }
+                        then: [ homeassistant.service: { service: switch.turn_on,  data: { entity_id: "${entity_sync_padlofutes}" } } ]
+                        else: [ homeassistant.service: { service: switch.turn_off, data: { entity_id: "${entity_sync_padlofutes}" } } ]
+              - label: { x: 20, y: 95, text: "BOJLER", text_font: font_md, text_color: 0xFFFFFF }
+              - switch:
+                  id: sw_bojler
+                  x: 280
+                  y: 90
+                  width: 60
+                  height: 30
+                  on_value:
+                    - if:
+                        condition: { lambda: 'return x;' }
+                        then: [ homeassistant.service: { service: switch.turn_on,  data: { entity_id: "${entity_sync_bojler}" } } ]
+                        else: [ homeassistant.service: { service: switch.turn_off, data: { entity_id: "${entity_sync_bojler}" } } ]
+              - label: { x: 20, y: 135, text: "IDEIGLENES BOJLER", text_font: font_md, text_color: 0xFFFFFF }
+              - switch:
+                  id: sw_id_bojler
+                  x: 280
+                  y: 130
+                  width: 60
+                  height: 30
+                  on_value:
+                    - if:
+                        condition: { lambda: 'return x;' }
+                        then: [ homeassistant.service: { service: input_boolean.turn_on,  data: { entity_id: "${entity_sync_id_bojler}" } } ]
+                        else: [ homeassistant.service: { service: input_boolean.turn_off, data: { entity_id: "${entity_sync_id_bojler}" } } ]
+              - line: { points: ["20,175", "360,175"], line_color: 0x242A40, line_width: 1 }
+              - label: { x: 20, y: 195, text: "\U000F0238", text_font: icons_md, text_color: $color_accent_amber }
+              - label: { x: 55, y: 195, text: "KAZAN:", text_font: font_md, text_color: $color_muted }
+              - label: { id: ui_kazan_val, x: 200, y: 190, text: "--°C", text_font: font_mono_lg, text_color: $color_accent_amber }
+              - label: { x: 20, y: 230, text: "\U000F050F", text_font: icons_md, text_color: $color_danger }
+              - label: { x: 55, y: 230, text: "PUFFER F.:", text_font: font_md, text_color: $color_muted }
+              - label: { id: ui_puffer_top_val, x: 200, y: 225, text: "--°C", text_font: font_mono_lg, text_color: $color_danger }
+              - label: { x: 20, y: 265, text: "\U000F050F", text_font: icons_md, text_color: 0x41BDF5 }
+              - label: { x: 55, y: 265, text: "PUFFER A.:", text_font: font_md, text_color: $color_muted }
+              - label: { id: ui_puffer_bot_val, x: 200, y: 260, text: "--°C", text_font: font_mono_lg, text_color: 0x41BDF5 }
+              - label: { x: 20, y: 300, text: "\U000F0411", text_font: icons_md, text_color: $color_accent_green }
+              - label: { x: 55, y: 300, text: "PADLO:", text_font: font_md, text_color: $color_muted }
+              - label: { id: ui_floor_val, x: 200, y: 295, text: "--°C", text_font: font_mono_lg, text_color: $color_accent_green }
+              - label: { x: 20, y: 335, text: "\U000F058E", text_font: icons_md, text_color: $color_accent_orange }
+              - label: { x: 55, y: 335, text: "MELEGVIZ:", text_font: font_md, text_color: $color_muted }
+              - label: { id: ui_hotwater_val, x: 200, y: 330, text: "--°C", text_font: font_mono_lg, text_color: $color_accent_orange }
+              - label: { x: 20, y: 370, text: "\U000F0E6E", text_font: icons_md, text_color: $color_accent_purple }
+              - label: { x: 55, y: 370, text: "LEGSZENNY.:", text_font: font_md, text_color: $color_muted }
+              - label: { id: ui_kazan_mq_val, x: 200, y: 365, text: "-- ppm", text_font: font_mono_lg, text_color: $color_accent_purple }

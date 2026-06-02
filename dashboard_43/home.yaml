@@ -1,0 +1,215 @@
+# =============================================================================
+# dashboard_43/home.yaml
+# -----------------------------------------------------------------------------
+# KEZDOOLDAL (page_home) - alapertelmezett oldal a tab bar 0. indexen
+# -----------------------------------------------------------------------------
+# Tartalom:
+#   - Bal panel:  Rendszerido (nagy ora), benti hom/para, datum, napkelte/menete
+#   - Jobb felso: Idojaras kartya (ikon + hom + paratart + szel + nyomas)
+#                 -> Kattintva: forecast overlay (5 napos elorejelzes)
+#   - Jobb also:  Home Assistant kapcsolat allapot (ONLINE/OFFLINE + WiFi)
+#   - Settings gomb (jobb also sarok, fogaskerek ikon)
+#
+# Szenzorok HA-bol:
+#   - HA weather attributes: temp, humidity, wind_speed, pressure, state
+#   - HA indoor: temperature, humidity
+#
+# UI frissites: minden HA sensor "on_value" frissiti a megfelelo cimket
+# (es a forecast overlay tukrozett cimkeit is - ui_fc_*).
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# IDOJARAS + BELTERI SZENZOROK
+# -----------------------------------------------------------------------------
+# Az isnan check kell mert a weather attributumok valamilyen helyzetben
+# (pl. API hiba) NaN-t adhatnak vissza - egyebkent "nan" felirat jelenne meg.
+sensor:
+  - platform: homeassistant
+    id: weather_temp
+    entity_id: "${entity_weather}"
+    attribute: temperature
+    on_value:
+      then:
+        - lvgl.label.update: { id: ui_temp_label, text: !lambda 'return isnan(x) ? "--" : str_sprintf("%.0f", x);' }
+        - lvgl.label.update: { id: ui_fc_current_temp, text: !lambda 'return isnan(x) ? "--°" : str_sprintf("%.0f°", x);' }
+  - platform: homeassistant
+    id: weather_humidity
+    entity_id: "${entity_weather}"
+    attribute: humidity
+    on_value:
+      then:
+        - lvgl.label.update: { id: ui_humidity_label, text: !lambda 'return isnan(x) ? "--%" : str_sprintf("%.0f%%", x);' }
+        - lvgl.label.update: { id: ui_fc_current_hum, text: !lambda 'return isnan(x) ? "--%" : str_sprintf("%.0f%%", x);' }
+  - platform: homeassistant
+    id: weather_wind
+    entity_id: "${entity_weather}"
+    attribute: wind_speed
+    on_value:
+      then:
+        - lvgl.label.update: { id: ui_wind_label, text: !lambda 'return isnan(x) ? "--" : str_sprintf("%.0f", x);' }
+        - lvgl.label.update: { id: ui_fc_current_wind, text: !lambda 'return isnan(x) ? "--" : str_sprintf("%.0f", x);' }
+  - platform: homeassistant
+    id: weather_pressure
+    entity_id: "${entity_weather}"
+    attribute: pressure
+    on_value:
+      then:
+        - lvgl.label.update: { id: ui_pressure_label, text: !lambda 'return isnan(x) ? "----" : str_sprintf("%.0f", x);' }
+        - lvgl.label.update: { id: ui_fc_current_press, text: !lambda 'return isnan(x) ? "----" : str_sprintf("%.0f", x);' }
+  - platform: homeassistant
+    id: indoor_temp
+    entity_id: "${entity_indoor_temp}"
+    on_value:
+      then:
+        - lvgl.label.update: { id: ui_indoor_temp, text: !lambda 'return str_sprintf("%.1f°C", x);' }
+        - lvgl.label.update: { id: ui_current_temp_lbl, text: !lambda 'return str_sprintf("%.1f °C", x);' }
+        - lvgl.label.update: { id: ui_night_amber_temp,  text: !lambda 'return str_sprintf("%.1f°C", x);' }
+        - lvgl.label.update: { id: ui_night_matrix_temp, text: !lambda 'return str_sprintf("%.1f°C", x);' }
+  - platform: homeassistant
+    id: indoor_hum
+    entity_id: "${entity_indoor_hum}"
+    on_value:
+      then:
+        - lvgl.label.update: { id: ui_indoor_hum, text: !lambda 'return str_sprintf("%.0f%%", x);' }
+        - lvgl.label.update: { id: ui_night_amber_hum,  text: !lambda 'return str_sprintf("%.0f%%", x);' }
+        - lvgl.label.update: { id: ui_night_matrix_hum, text: !lambda 'return str_sprintf("%.0f%%", x);' }
+
+# -----------------------------------------------------------------------------
+# IDOJARAS ALLAPOT - magyar fordias + nagy idojaras ikon valtas
+# -----------------------------------------------------------------------------
+# A weather.state egy enum stringet ad ("sunny", "cloudy", "partlycloudy", stb.).
+# Egy lambda mind a ket cimket (home + forecast) frissiti egyetlen szovegre,
+# majd az if-blokkok a megfelelo PNG ikont allitjak be (ui_weather_icon_big
+# + ui_fc_current_icon - egyszerre).
+text_sensor:
+  - platform: homeassistant
+    id: weather_state
+    entity_id: "${entity_weather}"
+    on_value:
+      then:
+        - lambda: |-
+            std::string s = x;
+            std::string hu;
+            if (s == "sunny") hu = "Napos";
+            else if (s == "cloudy") hu = "Felhos";
+            else if (s == "partlycloudy") hu = "Reszben felhos";
+            else if (s == "rainy") hu = "Esos";
+            else if (s == "pouring") hu = "Zaporeso";
+            else if (s == "snowy") hu = "Havas";
+            else if (s == "snowy-rainy") hu = "Havas eso";
+            else if (s == "windy" || s == "windy-variant") hu = "Szeles";
+            else if (s == "clear-night") hu = "Tiszta ej";
+            else if (s == "fog") hu = "Kodos";
+            else if (s == "hail") hu = "Jegeso";
+            else if (s == "lightning" || s == "lightning-rainy") hu = "Vihar";
+            else if (s == "exceptional") hu = "Extrem ido";
+            else hu = s;
+            lv_label_set_text(id(ui_weather_state_label), hu.c_str());
+            lv_label_set_text(id(ui_fc_current_state), hu.c_str());
+        - if: { condition: { lambda: 'return x == "sunny";' }, then: [lvgl.image.update: { id: ui_weather_icon_big, src: img_sunny }, lvgl.image.update: { id: ui_fc_current_icon, src: img_sunny }] }
+        - if: { condition: { lambda: 'return x == "cloudy";' }, then: [lvgl.image.update: { id: ui_weather_icon_big, src: img_cloudy }, lvgl.image.update: { id: ui_fc_current_icon, src: img_cloudy }] }
+        - if: { condition: { lambda: 'return x == "partlycloudy";' }, then: [lvgl.image.update: { id: ui_weather_icon_big, src: img_partlycloudy }, lvgl.image.update: { id: ui_fc_current_icon, src: img_partlycloudy }] }
+        - if: { condition: { lambda: 'return x == "rainy";' }, then: [lvgl.image.update: { id: ui_weather_icon_big, src: img_rainy }, lvgl.image.update: { id: ui_fc_current_icon, src: img_rainy }] }
+        - if: { condition: { lambda: 'return x == "pouring";' }, then: [lvgl.image.update: { id: ui_weather_icon_big, src: img_pouring }, lvgl.image.update: { id: ui_fc_current_icon, src: img_pouring }] }
+        - if: { condition: { lambda: 'return x == "snowy" || x == "snowy-rainy" || x == "hail";' }, then: [lvgl.image.update: { id: ui_weather_icon_big, src: img_snowy }, lvgl.image.update: { id: ui_fc_current_icon, src: img_snowy }] }
+        - if: { condition: { lambda: 'return x == "windy" || x == "windy-variant";' }, then: [lvgl.image.update: { id: ui_weather_icon_big, src: img_windy }, lvgl.image.update: { id: ui_fc_current_icon, src: img_windy }] }
+        - if: { condition: { lambda: 'return x == "clear-night";' }, then: [lvgl.image.update: { id: ui_weather_icon_big, src: img_night }, lvgl.image.update: { id: ui_fc_current_icon, src: img_night }] }
+        - if: { condition: { lambda: 'return x == "lightning" || x == "lightning-rainy";' }, then: [lvgl.image.update: { id: ui_weather_icon_big, src: img_thunderstorm }, lvgl.image.update: { id: ui_fc_current_icon, src: img_thunderstorm }] }
+        - if: { condition: { lambda: 'return x == "fog";' }, then: [lvgl.image.update: { id: ui_weather_icon_big, src: img_cloudy }, lvgl.image.update: { id: ui_fc_current_icon, src: img_cloudy }] }
+
+# =============================================================================
+# UI - PAGE_HOME (kezdooldal)
+# =============================================================================
+lvgl:
+  pages:
+    - id: page_home
+      bg_color: 0x000000
+      widgets:
+        # --- Hatterkep (bg_home_img - core.yaml-ben definialva) ---
+        - image: { src: bg_home_img, x: 0, y: 0 }
+        - label: { x: 550, y: 250, text: "\U000F07D0", text_font: icons_huge, text_color: 0x121625, text_opa: 30% }
+        - obj:
+            x: 16
+            y: 16
+            width: 460
+            height: 400
+            styles: style_card
+            bg_opa: 60%
+            widgets:
+              - obj: { x: 0, y: 0, width: 460, height: 2, bg_color: $color_accent_blue, bg_opa: COVER, border_width: 0, radius: 0 }
+              - label: { x: 16, y: 12, text: "RENDSZERIDO", text_font: font_xs, text_color: $color_accent_blue, text_letter_space: 2 }
+              - label: { x: 432, y: 10, text: "\U000F0150", text_font: icons_sm, text_color: $color_accent_blue }
+              - label: { x: 30, y: 40, text: "\U000F050F", text_font: icons_md, text_color: $color_accent_heat }
+              - label: { x: 70, y: 38, text: "BENTI HOM.", text_font: font_md, text_color: $color_muted }
+              - label: { id: ui_indoor_temp, x: 70, y: 58, text: "--", text_font: font_mono_lg, text_color: 0xFFFFFF }
+              - label: { x: 250, y: 40, text: "\U000F058E", text_font: icons_md, text_color: $color_accent_blue }
+              - label: { x: 290, y: 38, text: "PARATARTALOM", text_font: font_md, text_color: $color_muted }
+              - label: { id: ui_indoor_hum, x: 290, y: 58, text: "--", text_font: font_mono_lg, text_color: 0xFFFFFF }
+              - label: { id: ui_time_hh, x: 35, y: 105, text: "00", text_font: font_mono_mega, text_color: $color_accent_blue }
+              - label: { id: ui_time_colon, x: 200, y: 105, text: ":", text_font: font_mono_mega, text_color: 0x4A5070 }
+              - label: { id: ui_time_mm, x: 250, y: 105, text: "00", text_font: font_mono_mega, text_color: 0xFFFFFF }
+              - label: { id: ui_date_label, align: TOP_MID, y: 245, text: "----, ----. --. --.", text_font: font_mono_lg, text_color: 0xFFFFFF, text_letter_space: 2 }
+              - label: { x: 20, y: 335, text: "\U000F05B3", text_font: icons_md, text_color: $color_accent_amber }
+              - label: { x: 60, y: 330, text: "NAPKELTE", text_font: font_md, text_color: $color_muted }
+              - label: { id: ui_sunrise_label, x: 60, y: 355, text: "--:--", text_font: font_mono_lg, text_color: $color_accent_amber }
+              - label: { x: 260, y: 335, text: "\U000F05B2", text_font: icons_md, text_color: $color_accent_purple }
+              - label: { x: 300, y: 330, text: "NAPNYUGTA", text_font: font_md, text_color: $color_muted }
+              - label: { id: ui_sunset_label, x: 300, y: 355, text: "--:--", text_font: font_mono_lg, text_color: $color_accent_purple }
+        - button:
+            x: 492
+            y: 16
+            width: 292
+            height: 284
+            styles: style_card
+            bg_opa: 60%
+            on_click:
+              - lambda: 'id(is_forecast_open) = true;'
+              - lvgl.page.show: page_forecast
+              - lvgl.widget.hide: main_tab_bar
+            widgets:
+              - obj: { x: 0, y: 0, width: 292, height: 2, bg_color: $color_accent_purple, bg_opa: COVER, border_width: 0, radius: 0 }
+              - label: { x: 16, y: 12, text: "IDOJARAS", text_font: font_xs, text_color: $color_accent_purple, text_letter_space: 2 }
+              - label: { x: 264, y: 10, text: "\U000F015F", text_font: icons_sm, text_color: $color_accent_purple }
+              - image: { id: ui_weather_icon_big, src: img_partlycloudy, x: 8, y: 50 }
+              - label: { id: ui_temp_label, x: 130, y: 60, text: "--", text_font: font_mono_huge, text_color: $color_accent_blue }
+              - label: { x: 250, y: 64, text: "°C", text_font: font_mono_lg, text_color: 0x008BAA }
+              - label: { id: ui_weather_state_label, align: TOP_MID, y: 168, text: "Betoltes...", text_font: font_md, text_color: 0xFFFFFF, text_letter_space: 1 }
+              - line: { points: ["20,200", "272,200"], line_color: 0x242A40, line_width: 1 }
+              - label: { x: 26, y: 213, text: "\U000F058E", text_font: icons_sm, text_color: $color_accent_blue }
+              - label: { id: ui_humidity_label, x: 22, y: 238, text: "--%", text_font: font_mono_lg, text_color: 0xFFFFFF }
+              - label: { x: 116, y: 213, text: "\U000F059D", text_font: icons_sm, text_color: $color_accent_blue }
+              - label: { id: ui_wind_label, x: 110, y: 238, text: "--", text_font: font_mono_lg, text_color: 0xFFFFFF }
+              - label: { x: 155, y: 250, text: "km/h", text_font: font_xs, text_color: $color_subtle }
+              - label: { x: 211, y: 213, text: "\U000F029C", text_font: icons_sm, text_color: $color_accent_blue }
+              - label: { id: ui_pressure_label, x: 205, y: 238, text: "----", text_font: font_mono_lg, text_color: 0xFFFFFF }
+        - obj:
+            x: 492
+            y: 316
+            width: 292
+            height: 100
+            styles: style_card
+            widgets:
+              - obj: { x: 0, y: 0, width: 292, height: 2, bg_color: 0x41BDF5, bg_opa: COVER, border_width: 0, radius: 0 }
+              - label: { id: ui_ha_icon, x: 20, y: 18, text: "\U000F07D0", text_font: icons_xl, text_color: $color_inactive }
+              - label: { x: 100, y: 20, text: "HOME ASSISTANT", text_font: font_xs, text_color: 0x41BDF5, text_letter_space: 1 }
+              - label: { id: ui_ha_status, x: 100, y: 45, text: "OFFLINE", text_font: font_mono_lg, text_color: $color_danger, text_letter_space: 2 }
+              - label: { id: ui_wifi_icon, x: 232, y: 24, text: "\U000F05AA", text_font: icons_lg, text_color: $color_danger }
+              - label: { id: ui_wifi_rssi, x: 224, y: 70, text: "-- dBm", text_font: font_xs, text_color: $color_subtle }
+        - button:
+            id: btn_open_settings
+            x: 752
+            y: 380
+            width: 36
+            height: 36
+            bg_color: 0x10131F
+            bg_opa: 80%
+            border_width: 1
+            border_color: 0x242A40
+            radius: 18
+            on_click:
+              - lambda: 'id(is_settings_open) = true;'
+              - lvgl.page.show: page_settings
+              - lvgl.widget.hide: main_tab_bar
+              - script.execute: refresh_settings_ui
+            widgets:
+              - label: { align: CENTER, text: "\U000F0493", text_font: icons_sm, text_color: $color_muted }

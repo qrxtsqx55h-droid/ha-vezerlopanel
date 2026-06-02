@@ -1,0 +1,211 @@
+# =============================================================================
+# dashboard_43/radar.yaml
+# -----------------------------------------------------------------------------
+# RADAR / JELENLETERZEKELO OLDAL (page_radar) - tab bar 3. index
+# -----------------------------------------------------------------------------
+# Tartalom:
+#   - Kozepen: nagy korformaju radar kep, kerek "sweep" animacio (forgo arc)
+#   - Status label: jelenlet eseten "JELENLET MUTATKOZIK", egyebkent "VAR..."
+#   - Erzekelesi tavolsag (cm) megjelenitese
+#   - 12 vertikalis bar (histogramm) az utolso 1 ora aktivitasarol (5
+#     percenkenti minta)
+#
+# Adatforras: HLK-LD2410 24GHz radar szenzor a hatso panelben.
+# A sweep animacio CSAK akkor fut, ha a radar oldal aktiv (is_radar_active flag) -
+# CPU-spórolas, mert 100ms-onkenti arc.update minden CPU időt elhasznalna.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# GLOBALIS ALLAPOTOK
+# -----------------------------------------------------------------------------
+globals:
+  # 12 elemu cyclic buffer az utolso 1 ora aktivitasarol (5 perc / minta)
+  - id: activity_buf
+    type: "std::array<int, 12>"
+    restore_value: false
+    initial_value: "{0,0,0,0,0,0,0,0,0,0,0,0}"
+  # Az aktualis 5 perces ablakban hany jelenlet esemeny tortent (5 perc utan
+  # belebillan a buffer vegere es 0-ra ujraindul)
+  - id: current_activity
+    type: int
+    restore_value: false
+    initial_value: "0"
+  # Aktualis sweep szog (0-360°) - 100ms-onkenti animacio
+  - id: radar_sweep_angle
+    type: int
+    restore_value: false
+    initial_value: "0"
+  # Az utoljara erzekelt szog (most nincs hasznalva, de fenntartva ha kell)
+  - id: detected_angle
+    type: int
+    restore_value: false
+    initial_value: "0"
+  # TRUE = a radar oldal aktiv -> sweep animacio megy. FALSE = mas oldal aktiv -> all
+  # (a set_tab_active script allitja be)
+  - id: is_radar_active
+    type: bool
+    restore_value: false
+    initial_value: "false"
+
+# -----------------------------------------------------------------------------
+# IDOZITOK
+# -----------------------------------------------------------------------------
+interval:
+  # 5 percenkenti: aktivitas histogramm leptetes (FIFO buffer shift)
+  - interval: 5min
+    then:
+      - lambda: |-
+          for (int i = 0; i < 11; i++) id(activity_buf)[i] = id(activity_buf)[i+1];
+          id(activity_buf)[11] = id(current_activity);
+          id(current_activity) = 0;
+      - script.execute: redraw_activity
+
+  # 100ms-enkenti: radar sweep animacio (csak ha aktiv az oldal!)
+  # 8°/100ms = 360° / 4.5 sec - egy teljes korbeforgas
+  # 4 reteg: trail2 (300° le), trail1 (330° le), sweep (fo), leading (62° elotte)
+  - interval: 100ms
+    then:
+      - if:
+          condition: { lambda: 'return id(is_radar_active);' }
+          then:
+            - lambda: 'id(radar_sweep_angle) = (id(radar_sweep_angle) + 8) % 360;'
+            - lvgl.arc.update: { id: ui_radar_trail2, rotation: !lambda 'return (id(radar_sweep_angle) + 300) % 360;' }
+            - lvgl.arc.update: { id: ui_radar_trail1, rotation: !lambda 'return (id(radar_sweep_angle) + 330) % 360;' }
+            - lvgl.arc.update: { id: ui_radar_sweep,  rotation: !lambda 'return id(radar_sweep_angle);' }
+            - lvgl.arc.update: { id: ui_radar_leading, rotation: !lambda 'return (id(radar_sweep_angle) + 62) % 360;' }
+
+# -----------------------------------------------------------------------------
+# SCRIPTEK
+# -----------------------------------------------------------------------------
+script:
+  # REDRAW_ACTIVITY - aktivitas histogramm bar-ok frissitese
+  # Az activity_buf[0..11] tartalmazza az utolso 12x5perc = 1 ora adatait.
+  # Egyszerre frissiti mind a 12 bar widget value-jat.
+  - id: redraw_activity
+    then:
+      - lambda: |-
+          lv_obj_t* bars[] = {id(ui_act_b0), id(ui_act_b1), id(ui_act_b2), id(ui_act_b3), id(ui_act_b4), id(ui_act_b5), id(ui_act_b6), id(ui_act_b7), id(ui_act_b8), id(ui_act_b9), id(ui_act_b10), id(ui_act_b11)};
+          for (int i = 0; i < 12; i++)
+            lv_bar_set_value(bars[i], id(activity_buf)[i], LV_ANIM_OFF);
+
+sensor:
+  - platform: homeassistant
+    id: radar_distance
+    entity_id: "${entity_radar_distance}"
+    on_value:
+      then:
+        - lambda: 'id(detected_angle) = id(radar_sweep_angle);'
+        - lvgl.widget.update:
+            id: ui_radar_dot
+            x: !lambda |-
+              if (isnan(x) || x <= 0) return 204;
+              float r_px = std::min(150.0f, (x / 600.0f) * 150.0f);
+              if (r_px < 8) r_px = 8;
+              float angle_rad = ((id(detected_angle) + 35) % 360) * 3.14159f / 180.0f;
+              return (int)(210.0f + r_px * cosf(angle_rad) - 6.0f);
+            y: !lambda |-
+              if (isnan(x) || x <= 0) return 174;
+              float r_px = std::min(150.0f, (x / 600.0f) * 150.0f);
+              if (r_px < 8) r_px = 8;
+              float angle_rad = ((id(detected_angle) + 35) % 360) * 3.14159f / 180.0f;
+              return (int)(180.0f + r_px * sinf(angle_rad) - 6.0f);
+        - lvgl.label.update: { id: ui_radar_dist, text: !lambda 'return x > 0 ? str_sprintf("%.1f m", x / 100.0f) : "--";' }
+        - lvgl.label.update: { id: ui_pres_dist, text: !lambda 'return x > 0 ? str_sprintf("TAVOLSAG -- %.1f m", x / 100.0f) : "TAVOLSAG -- --";' }
+
+binary_sensor:
+  - platform: homeassistant
+    id: ld2410_presence
+    entity_id: ${entity_ld2410_presence}
+    on_state:
+      then:
+        - lambda: 'if (x) id(current_activity) = std::min(100, id(current_activity) + 20);'
+        - lvgl.label.update: { id: ui_radar_status, text: !lambda 'return std::string(x ? "- DETEKTAL -" : "-  AKTIV  -");' }
+        - lvgl.label.update: { id: ui_pres_status_text, text: !lambda 'return std::string(x ? "DETEKTALVA" : "ALAPALLAPOT");' }
+        - if:
+            condition: { lambda: 'return x;' }
+            then: [ lvgl.widget.show: ui_radar_dot ]
+            else: [ lvgl.widget.hide: ui_radar_dot ]
+        - if:
+            condition:
+              lambda: |-
+                if (!x) return false;
+                auto t = id(ha_time).now();
+                if (!t.is_valid()) return false;
+                int hour = t.hour;
+                return (hour >= 23 || hour < 6);
+            then:
+              - script.execute:
+                  id: show_notification
+                  message: "MOZGAS EJJEL"
+                  icon: "\U000F0583"
+                  color: 0x00FF88
+                  sticky: false
+
+lvgl:
+  pages:
+    - id: page_radar
+      bg_color: 0x000000
+      widgets:
+        - image: { src: bg_home_img, x: 0, y: 0 }
+        - obj:
+            x: 16
+            y: 16
+            width: 420
+            height: 400
+            styles: style_radar_card
+            bg_opa: 55%
+            widgets:
+              - obj: { x: 0, y: 0, width: 420, height: 2, bg_color: $color_accent_purple, bg_opa: COVER, border_width: 0, radius: 0 }
+              - label: { x: 16, y: 12, text: "RADAR - LD2410", text_font: font_xs, text_color: $color_accent_purple }
+              - label: { x: 392, y: 10, text: "\U000F0437", text_font: icons_sm, text_color: $color_accent_purple }
+              - obj: { align: CENTER, y: -20, width: 300, height: 300, bg_opa: TRANSP, border_width: 1, border_color: $color_accent_purple, radius: 150 }
+              - obj: { align: CENTER, y: -20, width: 220, height: 220, bg_opa: TRANSP, border_width: 1, border_color: $color_accent_purple, radius: 110 }
+              - obj: { align: CENTER, y: -20, width: 140, height: 140, bg_opa: TRANSP, border_width: 1, border_color: $color_accent_purple, radius: 70 }
+              - obj: { align: CENTER, y: -20, width: 60, height: 60, bg_opa: TRANSP, border_width: 1, border_color: $color_accent_purple, radius: 30 }
+              - line: { points: ["60,180", "360,180"], line_color: 0x1E2235, line_width: 1 }
+              - line: { points: ["210,30", "210,330"], line_color: 0x1E2235, line_width: 1 }
+              - arc: { id: ui_radar_trail2, align: CENTER, y: -20, width: 296, height: 296, start_angle: 0, end_angle: 30, arc_color: 0x3D2E80, arc_width: 3 }
+              - arc: { id: ui_radar_trail1, align: CENTER, y: -20, width: 298, height: 298, start_angle: 0, end_angle: 30, arc_color: 0x5E45B0, arc_width: 4 }
+              - arc: { id: ui_radar_sweep, align: CENTER, y: -20, width: 300, height: 300, start_angle: 0, end_angle: 70, arc_color: $color_accent_purple, arc_width: 6 }
+              - arc: { id: ui_radar_leading, align: CENTER, y: -20, width: 304, height: 304, start_angle: 0, end_angle: 8, arc_color: 0xFFFFFF, arc_width: 8 }
+              - obj: { align: CENTER, y: -20, width: 8, height: 8, bg_color: $color_accent_purple, radius: 4 }
+              - obj: { id: ui_radar_dot, x: 204, y: 174, width: 12, height: 12, styles: style_radar_dot, hidden: true }
+              - label: { id: ui_radar_dist, align: BOTTOM_MID, y: -38, text: "--", text_font: font_mono_lg, text_color: $color_accent_purple }
+              - label: { id: ui_radar_status, align: BOTTOM_MID, y: -16, text: "-  AKTIV  -", text_font: font_xs, text_color: $color_accent_green }
+        - obj:
+            x: 452
+            y: 16
+            width: 332
+            height: 190
+            styles: style_radar_card
+            bg_opa: 55%
+            widgets:
+              - obj: { x: 0, y: 0, width: 332, height: 2, bg_color: $color_accent_purple, bg_opa: COVER, border_width: 0, radius: 0 }
+              - label: { x: 16, y: 12, text: "STATUSZ", text_font: font_xs, text_color: $color_accent_purple }
+              - label: { x: 304, y: 10, text: "\U000F0208", text_font: icons_sm, text_color: $color_accent_purple }
+              - label: { align: TOP_MID, y: 38, text: "\U000F0583", text_font: icons_xl, text_color: $color_accent_green }
+              - label: { id: ui_pres_status_text, align: TOP_MID, y: 110, text: "ALAPALLAPOT", text_font: font_md, text_color: $color_accent_green }
+              - label: { id: ui_pres_dist, align: BOTTOM_MID, y: -16, text: "TAVOLSAG -- --", text_font: font_xs, text_color: $color_subtle }
+        - obj:
+            x: 452
+            y: 222
+            width: 332
+            height: 194
+            styles: style_radar_card
+            bg_opa: 55%
+            widgets:
+              - obj: { x: 0, y: 0, width: 332, height: 2, bg_color: $color_accent_purple, bg_opa: COVER, border_width: 0, radius: 0 }
+              - label: { x: 16, y: 12, text: "UTOLSO 60 PERC", text_font: font_xs, text_color: $color_accent_purple }
+              - label: { x: 304, y: 10, text: "\U000F012A", text_font: icons_sm, text_color: $color_accent_purple }
+              - bar: { id: ui_act_b0, x: 14, y: 70, width: 22, height: 90, styles: style_radar_bar }
+              - bar: { id: ui_act_b1, x: 39, y: 70, width: 22, height: 90, styles: style_radar_bar }
+              - bar: { id: ui_act_b2, x: 64, y: 70, width: 22, height: 90, styles: style_radar_bar }
+              - bar: { id: ui_act_b3, x: 89, y: 70, width: 22, height: 90, styles: style_radar_bar }
+              - bar: { id: ui_act_b4, x: 114, y: 70, width: 22, height: 90, styles: style_radar_bar }
+              - bar: { id: ui_act_b5, x: 139, y: 70, width: 22, height: 90, styles: style_radar_bar }
+              - bar: { id: ui_act_b6, x: 164, y: 70, width: 22, height: 90, styles: style_radar_bar }
+              - bar: { id: ui_act_b7, x: 189, y: 70, width: 22, height: 90, styles: style_radar_bar }
+              - bar: { id: ui_act_b8, x: 214, y: 70, width: 22, height: 90, styles: style_radar_bar }
+              - bar: { id: ui_act_b9, x: 239, y: 70, width: 22, height: 90, styles: style_radar_bar }
+              - bar: { id: ui_act_b10, x: 264, y: 70, width: 22, height: 90, styles: style_radar_bar }
+              - bar: { id: ui_act_b11, x: 289, y: 70, width: 22, height: 90, styles: style_radar_bar }

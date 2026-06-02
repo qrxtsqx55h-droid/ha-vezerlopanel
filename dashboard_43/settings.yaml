@@ -1,0 +1,405 @@
+# =============================================================================
+# dashboard_43/settings.yaml
+# -----------------------------------------------------------------------------
+# BEALLITASOK OLDAL (page_settings) + a hozza tartozo UI frissito script
+# -----------------------------------------------------------------------------
+# Ez a modul KIZAROLAG a beallitasok KEPERNYOJET tartalmazza. A tenyleges
+# logika (ejszakai mod kiertekeles, carousel idozites) es a konfig entitasok
+# (switch / number / select) a night_mode.yaml-ban maradnak, mert szorosan
+# a mukodesi logikajukhoz kotodnek.
+#
+# A beallitasok oldal a HOME oldal jobb also fogaskerek gombjarol nyilik
+# (lasd: home-2.yaml -> btn_open_settings).
+#
+# A page_settings gorgetheto (scrollbar_mode: AUTO), mert 4 kartya van
+# egymas alatt, osszesen 644px magassagban (> 480px viewport):
+#   y=68-228:   EJSZAKAI MOD     (manualis + auto kapcsolo)
+#   y=240-400:  ORA BEALLITAS    (kezdet/vege +/- gombok)
+#   y=412-472:  KEPVALTO         (kapcsolo + idokoz +/-)
+#   y=484-644:  STILUS           (Amber / Matrix valaszto)
+#
+# Kereszt-hivatkozasok mas modulokbol:
+#   - night_mode.yaml: night_mode_manual, night_mode_auto, night_start_hour,
+#     night_end_hour, auto_carousel_enabled, carousel_interval, night_style
+#   - core.yaml: set_tab_active, main_tab_bar, style_card, fontok, szinek
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# SCRIPT - REFRESH_SETTINGS_UI
+# -----------------------------------------------------------------------------
+# A beallitasok oldal osszes dinamikus elemenek frissitese.
+# Hivva: switch valtaskor (manualis/auto/carousel), number valtaskor
+#        (start_hour/end_hour/carousel_interval), select valtaskor (Amber/Matrix),
+#        es a Settings page megnyitasakor (btn_open_settings).
+#
+# Mit frissit:
+#   - 3 switch UI tukrozes (manual, auto, carousel)
+#   - Kepvalto idokoz label ("30 s")
+#   - Ora labelek (kezdet, vege) + tartam ("7 ora")
+#   - "Bekapcsolva: 23:00 - 06:00 kozott" hosszu felirat
+#   - Stilus kartyak (Amber / Matrix - melyik a kijelolt + szovegek)
+script:
+  - id: refresh_settings_ui
+    then:
+      - lvgl.widget.update: { id: sw_set_manual, state: { checked: !lambda 'return id(night_mode_manual).state;' } }
+      - lvgl.widget.update: { id: sw_set_auto,   state: { checked: !lambda 'return id(night_mode_auto).state;' } }
+      # === KEPVALTO UI FRISSITES ===
+      - lvgl.widget.update: { id: sw_carousel,   state: { checked: !lambda 'return id(auto_carousel_enabled).state;' } }
+      - lvgl.label.update:
+          id: ui_carousel_interval_lbl
+          text: !lambda 'return str_sprintf("%.0f s", id(carousel_interval).state);'
+      # === EJSZAKAI MOD ORA FRISSITES ===
+      - lvgl.label.update:
+          id: ui_night_start_lbl
+          text: !lambda 'return str_sprintf("%02d:00", (int)id(night_start_hour).state);'
+      - lvgl.label.update:
+          id: ui_night_end_lbl
+          text: !lambda 'return str_sprintf("%02d:00", (int)id(night_end_hour).state);'
+      - lvgl.label.update:
+          id: ui_night_duration_lbl
+          text: !lambda |-
+            int s = (int)id(night_start_hour).state;
+            int e = (int)id(night_end_hour).state;
+            int dur = (e - s + 24) % 24;
+            if (dur == 0) return std::string("kikapcs.");
+            return str_sprintf("%d ora", dur);
+      - lvgl.label.update:
+          id: ui_night_schedule_lbl
+          text: !lambda |-
+            int s = (int)id(night_start_hour).state;
+            int e = (int)id(night_end_hour).state;
+            return str_sprintf("Bekapcsolva: %02d:00 - %02d:00 kozott", s, e);
+      - if:
+          condition: { lambda: 'return id(night_style).current_option() == "Amber";' }
+          then:
+            - lvgl.widget.update: { id: card_style_amber,  border_width: 2, border_color: $color_accent_amber }
+            - lvgl.widget.update: { id: card_style_matrix, border_width: 1, border_color: $color_inactive }
+            - lvgl.label.update:  { id: lbl_style_amber_state,  text: "KIVALASZTVA", text_color: $color_accent_green }
+            - lvgl.label.update:  { id: lbl_style_matrix_state, text: "KIVALASZTAS",  text_color: $color_subtle }
+          else:
+            - lvgl.widget.update: { id: card_style_amber,  border_width: 1, border_color: $color_inactive }
+            - lvgl.widget.update: { id: card_style_matrix, border_width: 2, border_color: 0x00BB55 }
+            - lvgl.label.update:  { id: lbl_style_amber_state,  text: "KIVALASZTAS",  text_color: $color_subtle }
+            - lvgl.label.update:  { id: lbl_style_matrix_state, text: "KIVALASZTVA", text_color: $color_accent_green }
+
+# =============================================================================
+# UI - PAGE_SETTINGS (gorgetheto beallitasok oldal)
+# =============================================================================
+lvgl:
+  pages:
+    - id: page_settings
+      bg_color: 0x000000
+      scrollbar_mode: AUTO
+      widgets:
+        # === FIX FEJLEC (back gomb + cim) ===
+        - button:
+            id: btn_settings_back
+            x: 20
+            y: 8
+            width: 100
+            height: 32
+            bg_opa: TRANSP
+            border_width: 0
+            # ---------------------------------------------------------------
+            # FONTOS: evaluate_night_mode meghivasa visszalepeskor!
+            # Ha a settings-ben a felhasznalo bekapcsolta a manualis ejszakai
+            # modot, ekkor latjuk be: vissza kell vinni az ejszakai mod oldalra.
+            # ---------------------------------------------------------------
+            on_click:
+              - lambda: 'id(is_settings_open) = false;'
+              - script.execute: evaluate_night_mode  # <- ujraerteneles is_settings_open=false utan
+              # Ha az evaluate_night_mode nem valtott at (mert nem aktiv az ejszakai mod),
+              # akkor a home oldalra valtunk:
+              - if:
+                  condition: { lambda: 'return !id(is_night_active);' }
+                  then:
+                    - script.execute: { id: set_tab_active, tab_index: 0 }
+                    - lvgl.widget.show: main_tab_bar
+            widgets:
+              - label: { align: LEFT_MID, x: 0, text: "< VISSZA", text_font: font_md, text_color: $color_subtle, text_letter_space: 3 }
+        - label: { align: TOP_MID, y: 14, text: "BEALLITASOK", text_font: font_md, text_color: $color_accent_blue, text_letter_space: 4 }
+        - obj: { x: 16, y: 48, width: 768, height: 2, bg_color: 0x1E2235, border_width: 0 }
+
+        # ============================================================
+        # KARTYA 1: EJSZAKAI MOD (manualis + auto)
+        # ============================================================
+        - obj:
+            x: 16
+            y: 68
+            width: 768
+            height: 160
+            styles: style_card
+            widgets:
+              - obj: { x: 0, y: 0, width: 768, height: 2, bg_color: $color_accent_blue, border_width: 0, radius: 0 }
+              - label: { x: 20, y: 12, text: "\U000F0F5F", text_font: icons_sm, text_color: $color_accent_blue }
+              - label: { x: 44, y: 14, text: "EJSZAKAI MOD", text_font: font_xs, text_color: $color_accent_blue, text_letter_space: 3 }
+
+              # --- 1. sor: Manualis bekapcsolas ---
+              - label: { x: 20, y: 50, text: "Manualis bekapcsolas", text_font: font_md, text_color: 0xFFFFFF }
+              - label: { x: 20, y: 72, text: "Felulirja az automatikus utemezest", text_font: font_xs, text_color: $color_muted }
+              - switch:
+                  id: sw_set_manual
+                  x: 690
+                  y: 53
+                  width: 60
+                  height: 30
+                  on_value:
+                    - if:
+                        condition: { lambda: 'return x;' }
+                        then: [ switch.turn_on: night_mode_manual ]
+                        else: [ switch.turn_off: night_mode_manual ]
+
+              - obj: { x: 20, y: 110, width: 728, height: 1, bg_color: 0x1E2235, border_width: 0 }
+
+              # --- 2. sor: Automatikus utemezes ---
+              - label: { x: 20, y: 122, text: "Automatikus utemezes", text_font: font_md, text_color: 0xFFFFFF }
+              - label: { id: ui_night_schedule_lbl, x: 20, y: 144, text: "Bekapcsolva: --:-- - --:--", text_font: font_xs, text_color: $color_muted }
+              - switch:
+                  id: sw_set_auto
+                  x: 690
+                  y: 125
+                  width: 60
+                  height: 30
+                  on_value:
+                    - if:
+                        condition: { lambda: 'return x;' }
+                        then: [ switch.turn_on: night_mode_auto ]
+                        else: [ switch.turn_off: night_mode_auto ]
+
+        # ============================================================
+        # KARTYA 2: ORA BEALLITAS (nagy, kenyelmes gombok)
+        # ============================================================
+        - obj:
+            x: 16
+            y: 240
+            width: 768
+            height: 160
+            styles: style_card
+            widgets:
+              - obj: { x: 0, y: 0, width: 768, height: 2, bg_color: $color_accent_purple, border_width: 0, radius: 0 }
+              - label: { x: 20, y: 12, text: "\U000F0150", text_font: icons_sm, text_color: $color_accent_purple }
+              - label: { x: 44, y: 14, text: "EJSZAKAI MOD - IDOZITES", text_font: font_xs, text_color: $color_accent_purple, text_letter_space: 3 }
+
+              # --- KEZDET (bal oldal) ---
+              - label: { x: 60, y: 50, text: "\U000F0F5F", text_font: icons_md, text_color: $color_accent_purple }
+              - label: { x: 100, y: 56, text: "KEZDET", text_font: font_md, text_color: 0xFFFFFF, text_letter_space: 2 }
+              - button:
+                  x: 60
+                  y: 95
+                  width: 56
+                  height: 50
+                  bg_color: 0x10131F
+                  border_width: 2
+                  border_color: $color_accent_purple
+                  radius: 12
+                  on_click:
+                    - number.set:
+                        id: night_start_hour
+                        value: !lambda |-
+                          int v = (int)id(night_start_hour).state - 1;
+                          if (v < 0) v = 23;
+                          return v;
+                  widgets: [ label: { align: CENTER, text: "-", text_font: font_lg, text_color: $color_accent_purple } ]
+              - label: { id: ui_night_start_lbl, x: 130, y: 100, width: 130, text: "23:00", text_font: font_mono_xl, text_color: $color_accent_purple, text_align: CENTER }
+              - button:
+                  x: 274
+                  y: 95
+                  width: 56
+                  height: 50
+                  bg_color: 0x10131F
+                  border_width: 2
+                  border_color: $color_accent_purple
+                  radius: 12
+                  on_click:
+                    - number.set:
+                        id: night_start_hour
+                        value: !lambda |-
+                          int v = (int)id(night_start_hour).state + 1;
+                          if (v > 23) v = 0;
+                          return v;
+                  widgets: [ label: { align: CENTER, text: "+", text_font: font_lg, text_color: $color_accent_purple } ]
+
+              # divider
+              - obj: { x: 384, y: 50, width: 1, height: 100, bg_color: 0x242A40, border_width: 0 }
+
+              # --- VEGE (jobb oldal) ---
+              - label: { x: 440, y: 50, text: "\U000F0599", text_font: icons_md, text_color: $color_accent_amber }
+              - label: { x: 480, y: 56, text: "VEGE", text_font: font_md, text_color: 0xFFFFFF, text_letter_space: 2 }
+              - label: { x: 660, y: 56, text: "Tartam:", text_font: font_xs, text_color: $color_muted }
+              - label: { id: ui_night_duration_lbl, x: 712, y: 56, text: "7 ora", text_font: font_sm, text_color: $color_accent_blue }
+              - button:
+                  x: 440
+                  y: 95
+                  width: 56
+                  height: 50
+                  bg_color: 0x10131F
+                  border_width: 2
+                  border_color: $color_accent_amber
+                  radius: 12
+                  on_click:
+                    - number.set:
+                        id: night_end_hour
+                        value: !lambda |-
+                          int v = (int)id(night_end_hour).state - 1;
+                          if (v < 0) v = 23;
+                          return v;
+                  widgets: [ label: { align: CENTER, text: "-", text_font: font_lg, text_color: $color_accent_amber } ]
+              - label: { id: ui_night_end_lbl, x: 510, y: 100, width: 130, text: "06:00", text_font: font_mono_xl, text_color: $color_accent_amber, text_align: CENTER }
+              - button:
+                  x: 654
+                  y: 95
+                  width: 56
+                  height: 50
+                  bg_color: 0x10131F
+                  border_width: 2
+                  border_color: $color_accent_amber
+                  radius: 12
+                  on_click:
+                    - number.set:
+                        id: night_end_hour
+                        value: !lambda |-
+                          int v = (int)id(night_end_hour).state + 1;
+                          if (v > 23) v = 0;
+                          return v;
+                  widgets: [ label: { align: CENTER, text: "+", text_font: font_lg, text_color: $color_accent_amber } ]
+
+        # ============================================================
+        # KARTYA 3: KEPVALTO
+        # ============================================================
+        - obj:
+            x: 16
+            y: 412
+            width: 768
+            height: 60
+            styles: style_card
+            widgets:
+              - obj: { x: 0, y: 0, width: 768, height: 2, bg_color: $color_accent_green, border_width: 0, radius: 0 }
+              # bal: switch + label
+              - switch:
+                  id: sw_carousel
+                  x: 20
+                  y: 16
+                  width: 50
+                  height: 24
+                  on_value:
+                    - if:
+                        condition: { lambda: 'return x;' }
+                        then: [ switch.turn_on: auto_carousel_enabled ]
+                        else: [ switch.turn_off: auto_carousel_enabled ]
+              - label: { x: 88, y: 14, text: "\U000F0454", text_font: icons_sm, text_color: $color_accent_green }
+              - label: { x: 112, y: 18, text: "AUTOMATA KEPVALTO", text_font: font_xs, text_color: 0xFFFFFF, text_letter_space: 2 }
+              # divider
+              - obj: { x: 380, y: 12, width: 1, height: 36, bg_color: 0x242A40, border_width: 0 }
+              # jobb: idokoz + +/-
+              - label: { x: 400, y: 20, text: "IDOKOZ:", text_font: font_xs, text_color: $color_muted, text_letter_space: 1 }
+              - label: { id: ui_carousel_interval_lbl, x: 458, y: 18, text: "30 s", text_font: font_md, text_color: 0xFFFFFF }
+              - button:
+                  x: 560
+                  y: 12
+                  width: 40
+                  height: 36
+                  bg_color: 0x10131F
+                  border_width: 1
+                  border_color: $color_inactive
+                  radius: 18
+                  on_click:
+                    - number.set:
+                        id: carousel_interval
+                        value: !lambda |-
+                          float v = id(carousel_interval).state - 5.0f;
+                          if (v < 5.0f) v = 5.0f;
+                          return v;
+                  widgets: [ label: { align: CENTER, text: "-", text_font: font_md, text_color: 0xFFFFFF } ]
+              - button:
+                  x: 608
+                  y: 12
+                  width: 40
+                  height: 36
+                  bg_color: 0x10131F
+                  border_width: 1
+                  border_color: $color_inactive
+                  radius: 18
+                  on_click:
+                    - number.set:
+                        id: carousel_interval
+                        value: !lambda |-
+                          float v = id(carousel_interval).state + 5.0f;
+                          if (v > 300.0f) v = 300.0f;
+                          return v;
+                  widgets: [ label: { align: CENTER, text: "+", text_font: font_md, text_color: 0xFFFFFF } ]
+
+        # ============================================================
+        # KARTYA 4: STILUS (Amber / Matrix - gorgetessel elerheto)
+        # ============================================================
+        - obj:
+            x: 16
+            y: 484
+            width: 768
+            height: 160
+            styles: style_card
+            widgets:
+              - obj: { x: 0, y: 0, width: 768, height: 2, bg_color: $color_accent_amber, border_width: 0, radius: 0 }
+              - label: { x: 20, y: 12, text: "\U000F0274", text_font: icons_sm, text_color: $color_accent_amber }
+              - label: { x: 44, y: 14, text: "STILUS", text_font: font_xs, text_color: $color_accent_amber, text_letter_space: 3 }
+              - button:
+                  id: card_style_amber
+                  x: 44
+                  y: 30
+                  width: 320
+                  height: 120
+                  bg_color: 0x0A0810
+                  bg_opa: COVER
+                  border_width: 2
+                  border_color: $color_accent_amber
+                  radius: 10
+                  on_click:
+                    - select.set: { id: night_style, option: "Amber" }
+                  widgets:
+                    - arc:
+                        x: 24
+                        y: 28
+                        width: 70
+                        height: 70
+                        start_angle: 0
+                        end_angle: 360
+                        rotation: 270
+                        min_value: 0
+                        max_value: 24
+                        value: 2
+                        arc_color: 0x221100
+                        arc_width: 4
+                        indicator: { arc_color: 0x884400, arc_width: 4 }
+                    - label: { x: 36, y: 50, text: "02:47", text_font: font_mono_sm, text_color: 0x884400 }
+                    - label: { x: 120, y: 22, text: "AMBER", text_font: font_sm, text_color: $color_accent_amber, text_letter_space: 3 }
+                    - label: { x: 120, y: 46, text: "Meleg, ambient", text_font: font_xs, text_color: 0x553300 }
+                    - label: { x: 120, y: 64, text: "borostyan tonus", text_font: font_xs, text_color: 0x553300 }
+                    - obj: { x: 120, y: 92, width: 8, height: 8, bg_color: $color_accent_green, radius: 4, border_width: 0 }
+                    - label: { id: lbl_style_amber_state, x: 134, y: 90, text: "KIVALASZTVA", text_font: font_xs, text_color: $color_accent_green, text_letter_space: 2 }
+              - button:
+                  id: card_style_matrix
+                  x: 404
+                  y: 30
+                  width: 320
+                  height: 120
+                  bg_color: 0x000000
+                  bg_opa: COVER
+                  border_width: 1
+                  border_color: $color_inactive
+                  radius: 10
+                  on_click:
+                    - select.set: { id: night_style, option: "Matrix" }
+                  widgets:
+                    - label: { x: 14, y: 18, text: "1\nA\nF\n0", text_font: font_mono_xs, text_color: 0x00833A, text_line_space: 0 }
+                    - label: { x: 28, y: 22, text: "B\n1\nF", text_font: font_mono_xs, text_color: 0x9CFFC8, text_line_space: 0 }
+                    - label: { x: 42, y: 16, text: "3\nD\nA\n2\n1", text_font: font_mono_xs, text_color: 0x005527, text_line_space: 0 }
+                    - label: { x: 56, y: 60, text: "F\nA", text_font: font_mono_xs, text_color: 0x9CFFC8, text_line_space: 0 }
+                    - label: { x: 70, y: 20, text: "7\n2\nA\nF\n1", text_font: font_mono_xs, text_color: 0x006B30, text_line_space: 0 }
+                    - obj: { x: 95, y: 36, width: 100, height: 30, bg_color: 0x000000, bg_opa: 85%, border_width: 1, border_color: 0x00BB55, radius: 2 }
+                    - label: { x: 110, y: 42, text: "02:47", text_font: font_mono_md, text_color: 0x00BB55 }
+                    - label: { x: 240, y: 70, text: "2\nB\nF", text_font: font_mono_xs, text_color: 0x005527, text_line_space: 0 }
+                    - label: { x: 254, y: 78, text: "A\n3", text_font: font_mono_xs, text_color: 0x9CFFC8, text_line_space: 0 }
+                    - label: { x: 268, y: 66, text: "5\nF\n1\nA", text_font: font_mono_xs, text_color: 0x006B30, text_line_space: 0 }
+                    - label: { x: 120, y: 16, text: "MATRIX", text_font: font_sm, text_color: 0x00BB55, text_letter_space: 3 }
+                    - label: { x: 14, y: 92, text: "Digital rain, zold karakterekkel", text_font: font_xs, text_color: 0x005522 }
+                    - obj: { x: 14, y: 110, width: 8, height: 8, bg_opa: TRANSP, border_width: 1, border_color: $color_subtle, radius: 4 }
+                    - label: { id: lbl_style_matrix_state, x: 28, y: 108, text: "KIVALASZTAS", text_font: font_xs, text_color: $color_subtle, text_letter_space: 2 }

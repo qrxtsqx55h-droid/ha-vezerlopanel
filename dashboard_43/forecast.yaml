@@ -1,0 +1,468 @@
+# =============================================================================
+# dashboard_43/forecast.yaml - Seattle-stilusu redesign
+# Felul: helyiseg + datum, kozepen nagy ikon + allapot, jobbra reszletek
+# Bal kozepen: nagy temp + "Erzet: ..."
+# Alul: 5 napos sor (PNG ikonok 50x50, max hom)
+# =============================================================================
+# =============================================================================
+# dashboard_43/forecast.yaml
+# -----------------------------------------------------------------------------
+# 5 NAPOS IDOJARAS ELOREJELZES OVERLAY (page_forecast)
+# -----------------------------------------------------------------------------
+# Ez egy "overlay" oldal, amit a HOME oldal idojaras kartyajara kattintassal
+# lehet megnyitni. Glass Morphism stilus, cyan accent border-rel.
+#
+# Tartalom:
+#   - Bal felso: varos (Miercurea-Ciuc), datum, nap
+#   - Kozep felul: nagy idojaras ikon + halo glow + "Esos" allapot + Erzet
+#   - Bal kozep: nagy aktualis homerseklet (font_temp_huge 130px)
+#   - Jobb panel: 5 reszlet (Napkelte, Naplemente, Paratart, Szel, Nyomas)
+#   - Also sav: 5 napos kartyak (MA, HOLNAP, KED, SZE, CSU) - HELYI napnev
+#               + ikon + max hom + min hom
+#   - Bezaro X gomb (jobb felso) ES kattintas a hatterre
+#
+# Adatforras:
+#   - Aktualis: weather.pirateweather (home-2.yaml frissiti az ui_fc_* mezoket)
+#   - 5 napos: sensor.forecast_d1..d5_condition + tempmax + tempmin
+#   - Napnevek: ESPHome ha_time-bol HELYILEG szamolva (lasd: core.yaml refresh_clock)
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# GLOBALIS VALTOZOK
+# -----------------------------------------------------------------------------
+globals:
+  # TRUE = a forecast overlay nyitva (evaluate_night_mode NE valtson oldalt)
+  - id: is_forecast_open
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  # Atmenetileg tarolt condition->ikon tipus (1-9), hogy az update_fc_row_icon
+  # script ne ismetelje a string osszehasonlitast minden napra (5x10 = 50
+  # if-blokk helyett 1x9 + 5x9 int osszehasonlitas).
+  - id: fc_icon_type
+    type: int
+    restore_value: false
+    initial_value: "0"
+
+# -----------------------------------------------------------------------------
+# SCRIPT - UPDATE_FC_ROW_ICON
+# -----------------------------------------------------------------------------
+# Az 5 napos sor egy adott napjanak ikonjat allitja az idojaras
+# allapot (string) alapjan.
+# Parameterek:
+#   idx:       1-5 (melyik nap kartyaja)
+#   condition: HA weather state string ("sunny", "cloudy", "rainy", stb.)
+# Mukodes:
+#   1. Lambda: condition -> fc_icon_type (int 1-9, 0=ismeretlen)
+#   2. Outer if (idx): csak az adott naphoz tartozo lvgl.image.update fut
+#   3. Inner if (fc_icon_type): csak az adott tipushoz tartozo image frissit
+# Ez 5 napra ismetlodik (idx 1-5).
+script:
+  - id: update_fc_row_icon
+    parameters:
+      idx: int
+      condition: string
+    then:
+      - lambda: |-
+          int t = 0;
+          if (condition == "sunny") t = 1;
+          else if (condition == "clear-night") t = 2;
+          else if (condition == "cloudy" || condition == "fog") t = 3;
+          else if (condition == "partlycloudy") t = 4;
+          else if (condition == "rainy") t = 5;
+          else if (condition == "pouring") t = 6;
+          else if (condition == "snowy" || condition == "snowy-rainy" || condition == "hail") t = 7;
+          else if (condition == "windy" || condition == "windy-variant") t = 8;
+          else if (condition == "lightning" || condition == "lightning-rainy") t = 9;
+          else t = 3;
+          id(fc_icon_type) = t;
+      - if:
+          condition: { lambda: 'return idx == 1;' }
+          then:
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 1;' }, then: [lvgl.image.update: { id: fc_img_d1, src: img_sm_sunny }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 2;' }, then: [lvgl.image.update: { id: fc_img_d1, src: img_sm_night }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 3;' }, then: [lvgl.image.update: { id: fc_img_d1, src: img_sm_cloudy }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 4;' }, then: [lvgl.image.update: { id: fc_img_d1, src: img_sm_partlycloudy }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 5;' }, then: [lvgl.image.update: { id: fc_img_d1, src: img_sm_rainy }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 6;' }, then: [lvgl.image.update: { id: fc_img_d1, src: img_sm_pouring }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 7;' }, then: [lvgl.image.update: { id: fc_img_d1, src: img_sm_snowy }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 8;' }, then: [lvgl.image.update: { id: fc_img_d1, src: img_sm_windy }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 9;' }, then: [lvgl.image.update: { id: fc_img_d1, src: img_sm_thunderstorm }] }
+      - if:
+          condition: { lambda: 'return idx == 2;' }
+          then:
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 1;' }, then: [lvgl.image.update: { id: fc_img_d2, src: img_sm_sunny }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 2;' }, then: [lvgl.image.update: { id: fc_img_d2, src: img_sm_night }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 3;' }, then: [lvgl.image.update: { id: fc_img_d2, src: img_sm_cloudy }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 4;' }, then: [lvgl.image.update: { id: fc_img_d2, src: img_sm_partlycloudy }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 5;' }, then: [lvgl.image.update: { id: fc_img_d2, src: img_sm_rainy }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 6;' }, then: [lvgl.image.update: { id: fc_img_d2, src: img_sm_pouring }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 7;' }, then: [lvgl.image.update: { id: fc_img_d2, src: img_sm_snowy }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 8;' }, then: [lvgl.image.update: { id: fc_img_d2, src: img_sm_windy }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 9;' }, then: [lvgl.image.update: { id: fc_img_d2, src: img_sm_thunderstorm }] }
+      - if:
+          condition: { lambda: 'return idx == 3;' }
+          then:
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 1;' }, then: [lvgl.image.update: { id: fc_img_d3, src: img_sm_sunny }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 2;' }, then: [lvgl.image.update: { id: fc_img_d3, src: img_sm_night }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 3;' }, then: [lvgl.image.update: { id: fc_img_d3, src: img_sm_cloudy }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 4;' }, then: [lvgl.image.update: { id: fc_img_d3, src: img_sm_partlycloudy }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 5;' }, then: [lvgl.image.update: { id: fc_img_d3, src: img_sm_rainy }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 6;' }, then: [lvgl.image.update: { id: fc_img_d3, src: img_sm_pouring }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 7;' }, then: [lvgl.image.update: { id: fc_img_d3, src: img_sm_snowy }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 8;' }, then: [lvgl.image.update: { id: fc_img_d3, src: img_sm_windy }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 9;' }, then: [lvgl.image.update: { id: fc_img_d3, src: img_sm_thunderstorm }] }
+      - if:
+          condition: { lambda: 'return idx == 4;' }
+          then:
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 1;' }, then: [lvgl.image.update: { id: fc_img_d4, src: img_sm_sunny }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 2;' }, then: [lvgl.image.update: { id: fc_img_d4, src: img_sm_night }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 3;' }, then: [lvgl.image.update: { id: fc_img_d4, src: img_sm_cloudy }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 4;' }, then: [lvgl.image.update: { id: fc_img_d4, src: img_sm_partlycloudy }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 5;' }, then: [lvgl.image.update: { id: fc_img_d4, src: img_sm_rainy }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 6;' }, then: [lvgl.image.update: { id: fc_img_d4, src: img_sm_pouring }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 7;' }, then: [lvgl.image.update: { id: fc_img_d4, src: img_sm_snowy }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 8;' }, then: [lvgl.image.update: { id: fc_img_d4, src: img_sm_windy }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 9;' }, then: [lvgl.image.update: { id: fc_img_d4, src: img_sm_thunderstorm }] }
+      - if:
+          condition: { lambda: 'return idx == 5;' }
+          then:
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 1;' }, then: [lvgl.image.update: { id: fc_img_d5, src: img_sm_sunny }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 2;' }, then: [lvgl.image.update: { id: fc_img_d5, src: img_sm_night }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 3;' }, then: [lvgl.image.update: { id: fc_img_d5, src: img_sm_cloudy }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 4;' }, then: [lvgl.image.update: { id: fc_img_d5, src: img_sm_partlycloudy }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 5;' }, then: [lvgl.image.update: { id: fc_img_d5, src: img_sm_rainy }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 6;' }, then: [lvgl.image.update: { id: fc_img_d5, src: img_sm_pouring }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 7;' }, then: [lvgl.image.update: { id: fc_img_d5, src: img_sm_snowy }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 8;' }, then: [lvgl.image.update: { id: fc_img_d5, src: img_sm_windy }] }
+            - if: { condition: { lambda: 'return id(fc_icon_type) == 9;' }, then: [lvgl.image.update: { id: fc_img_d5, src: img_sm_thunderstorm }] }
+
+# -----------------------------------------------------------------------------
+# SZENZOROK - 5 nap max+min homerseklet + apparent_temperature
+# -----------------------------------------------------------------------------
+# A `%+.0f°` formattal a max hom mindig +/- jellel jelenik meg.
+# A min hom plusz jel nelkul (kisebb font, halvanyabb szin).
+# Az apparent_temperature a "Erzet: X°" feliratban jelenik meg.
+sensor:
+  # --- Max homersekletek (5 nap) ---
+  - platform: homeassistant
+    id: fc_d1_temp_max
+    entity_id: "${entity_fc_d1_temp_max}"
+    on_value:
+      then:
+        - lvgl.label.update: { id: fc_temp_d1, text: !lambda 'return str_sprintf("%+.0f°", x);' }
+  - platform: homeassistant
+    id: fc_d2_temp_max
+    entity_id: "${entity_fc_d2_temp_max}"
+    on_value:
+      then:
+        - lvgl.label.update: { id: fc_temp_d2, text: !lambda 'return str_sprintf("%+.0f°", x);' }
+  - platform: homeassistant
+    id: fc_d3_temp_max
+    entity_id: "${entity_fc_d3_temp_max}"
+    on_value:
+      then:
+        - lvgl.label.update: { id: fc_temp_d3, text: !lambda 'return str_sprintf("%+.0f°", x);' }
+  - platform: homeassistant
+    id: fc_d4_temp_max
+    entity_id: "${entity_fc_d4_temp_max}"
+    on_value:
+      then:
+        - lvgl.label.update: { id: fc_temp_d4, text: !lambda 'return str_sprintf("%+.0f°", x);' }
+  - platform: homeassistant
+    id: fc_d5_temp_max
+    entity_id: "${entity_fc_d5_temp_max}"
+    on_value:
+      then:
+        - lvgl.label.update: { id: fc_temp_d5, text: !lambda 'return str_sprintf("%+.0f°", x);' }
+
+  # --- Min homersekletek (5 nap) ---
+  - platform: homeassistant
+    id: fc_d1_temp_min
+    entity_id: "${entity_fc_d1_temp_min}"
+    on_value:
+      then:
+        - lvgl.label.update: { id: fc_temp_min_d1, text: !lambda 'return str_sprintf("%.0f°", x);' }
+  - platform: homeassistant
+    id: fc_d2_temp_min
+    entity_id: "${entity_fc_d2_temp_min}"
+    on_value:
+      then:
+        - lvgl.label.update: { id: fc_temp_min_d2, text: !lambda 'return str_sprintf("%.0f°", x);' }
+  - platform: homeassistant
+    id: fc_d3_temp_min
+    entity_id: "${entity_fc_d3_temp_min}"
+    on_value:
+      then:
+        - lvgl.label.update: { id: fc_temp_min_d3, text: !lambda 'return str_sprintf("%.0f°", x);' }
+  - platform: homeassistant
+    id: fc_d4_temp_min
+    entity_id: "${entity_fc_d4_temp_min}"
+    on_value:
+      then:
+        - lvgl.label.update: { id: fc_temp_min_d4, text: !lambda 'return str_sprintf("%.0f°", x);' }
+  - platform: homeassistant
+    id: fc_d5_temp_min
+    entity_id: "${entity_fc_d5_temp_min}"
+    on_value:
+      then:
+        - lvgl.label.update: { id: fc_temp_min_d5, text: !lambda 'return str_sprintf("%.0f°", x);' }
+
+  - platform: homeassistant
+    id: fc_apparent_temp
+    entity_id: "${entity_weather}"
+    attribute: apparent_temperature
+    on_value:
+      then:
+        - lvgl.label.update: { id: ui_fc_feels_like, text: !lambda 'return isnan(x) ? "Erzet: --°" : str_sprintf("Erzet: %.0f°", x);' }
+
+# -----------------------------------------------------------------------------
+# TEXT SZENZOROK - idojaras allapot stringek (sunny, cloudy, rainy...)
+# -----------------------------------------------------------------------------
+# Minden allapot frissites az update_fc_row_icon scriptet hivja az adott
+# nap (idx) es az uj condition (string) parameterevel.
+#
+# MEGJEGYZES: a napnevek (fc_d*_day) NEM HA-bol jonnek, hanem helyileg
+# vannak szamolva a refresh_clock lambda blokkjaban (core.yaml).
+text_sensor:
+  - platform: homeassistant
+    id: fc_d1_condition
+    entity_id: "${entity_fc_d1_condition}"
+    on_value:
+      then: [ script.execute: { id: update_fc_row_icon, idx: 1, condition: !lambda 'return x;' } ]
+  - platform: homeassistant
+    id: fc_d2_condition
+    entity_id: "${entity_fc_d2_condition}"
+    on_value:
+      then: [ script.execute: { id: update_fc_row_icon, idx: 2, condition: !lambda 'return x;' } ]
+  - platform: homeassistant
+    id: fc_d3_condition
+    entity_id: "${entity_fc_d3_condition}"
+    on_value:
+      then: [ script.execute: { id: update_fc_row_icon, idx: 3, condition: !lambda 'return x;' } ]
+  - platform: homeassistant
+    id: fc_d4_condition
+    entity_id: "${entity_fc_d4_condition}"
+    on_value:
+      then: [ script.execute: { id: update_fc_row_icon, idx: 4, condition: !lambda 'return x;' } ]
+  - platform: homeassistant
+    id: fc_d5_condition
+    entity_id: "${entity_fc_d5_condition}"
+    on_value:
+      then: [ script.execute: { id: update_fc_row_icon, idx: 5, condition: !lambda 'return x;' } ]
+
+# =============================================================================
+# UI - PAGE_FORECAST (5 napos elorejelzes overlay, GLASS MORPHISM stilus)
+# =============================================================================
+# Megnyitas: a home oldal idojaras kartyajara kattintassal
+# Bezaras:   X gomb VAGY a teljes hatter kattintasa
+#
+# A jobb panel x: 460 + width: 275 = 735 -> elfer az X bezaro gomb mellett
+# (x: 748, width: 40 -> 788 az X jobb szele a 800-as kepernyon).
+lvgl:
+  pages:
+    - id: page_forecast
+      bg_color: 0x040812
+      widgets:
+        # --- Teljes hatter bezaro gomb ---
+        - button:
+            x: 0
+            y: 0
+            width: 800
+            height: 480
+            bg_opa: TRANSP
+            border_width: 0
+            on_click:
+              - lambda: 'id(is_forecast_open) = false;'
+              # Ha az ejszakai mod aktiv, automatikusan tertunk vissza oda - kulonben home-ra
+              - script.execute: evaluate_night_mode
+              - if:
+                  condition: { lambda: 'return !id(is_night_active);' }
+                  then:
+                    - lvgl.widget.update: { id: main_tab_bar, hidden: false }
+                    - script.execute: { id: set_tab_active, tab_index: 0 }
+
+        # ====================================================================
+        # HATTERI GRADIENS GLOW (radialis hatas felulrol)
+        # ====================================================================
+        - obj: { x: 0, y: 0, width: 800, height: 200, bg_color: 0x0A1830, bg_grad_color: 0x040812, bg_grad_dir: VER, bg_opa: COVER, border_width: 0, radius: 0 }
+        - obj: { x: 0, y: 0, width: 800, height: 1, bg_color: $color_accent_blue, bg_opa: 30%, border_width: 0, radius: 0 }
+
+        # ====================================================================
+        # BEZARO GOMB (jobb felso sarok) - uveg hatas
+        # ====================================================================
+        - button:
+            id: btn_forecast_close
+            x: 748
+            y: 10
+            width: 40
+            height: 40
+            bg_color: 0x1A0816
+            bg_opa: 60%
+            border_width: 1
+            border_color: $color_danger
+            radius: 20
+            on_click:
+              - lambda: 'id(is_forecast_open) = false;'
+              # Ha az ejszakai mod aktiv, automatikusan tertunk vissza oda - kulonben home-ra
+              - script.execute: evaluate_night_mode
+              - if:
+                  condition: { lambda: 'return !id(is_night_active);' }
+                  then:
+                    - lvgl.widget.update: { id: main_tab_bar, hidden: false }
+                    - script.execute: { id: set_tab_active, tab_index: 0 }
+            widgets:
+              - label: { align: CENTER, text: "\U000F0156", text_font: icons_sm, text_color: $color_danger }
+
+        # ====================================================================
+        # BAL FELSO - varos, datum (vekony elegans tipografia)
+        # ====================================================================
+        - label: { x: 28, y: 16, text: "\U000F034E", text_font: icons_md, text_color: $color_accent_blue }
+        - label: { x: 62, y: 20, text: "Miercurea-Ciuc", text_font: font_lg, text_color: 0xFFFFFF, text_letter_space: 2 }
+        - label: { id: ui_fc_date_label, x: 28, y: 56, text: "majus 29.", text_font: font_md, text_color: 0xAACCEE, text_letter_space: 3 }
+        - label: { id: ui_fc_day_label, x: 28, y: 80, text: "Pentek", text_font: font_lg, text_color: $color_accent_blue, text_letter_space: 5 }
+
+        # ====================================================================
+        # IDOJARAS IKON (x:165) + ALLAPOT/ERZET JOBBRA MELLETTE
+        # ====================================================================
+        # Halo glow effekt az ikon mogott
+        - obj: { x: 175, y: 30, width: 130, height: 130, bg_color: 0x41BDF5, bg_opa: 8%, border_width: 0, radius: 65 }
+        - obj: { x: 190, y: 45, width: 100, height: 100, bg_color: 0x41BDF5, bg_opa: 12%, border_width: 0, radius: 50 }
+        - image: { id: ui_fc_current_icon, src: img_partlycloudy, x: 165, y: 20 }
+
+        # --- Esos + Erzet az ikon JOBB oldalan ---
+        - label: { id: ui_fc_current_state, x: 290, y: 60, width: 160, text: "Reszben felhos", text_font: font_lg, text_color: 0xFFFFFF, text_letter_space: 2 }
+        - label: { id: ui_fc_feels_like, x: 290, y: 95, width: 160, text: "Erzet: --°", text_font: font_md, text_color: 0x8AB0D0, text_letter_space: 1 }
+
+        # ====================================================================
+        # NAGY HOMERSEKLET (feljebb tolva, bal kozepe-also)
+        # ====================================================================
+        # Halo a homer mogott
+        - obj: { x: 25, y: 155, width: 80, height: 80, bg_color: 0xFF6B35, bg_opa: 10%, border_width: 0, radius: 40 }
+        - label: { x: 30, y: 160, text: "\U000F050F", text_font: icons_xl, text_color: $color_danger }
+        - label: { id: ui_fc_current_temp, x: 90, y: 145, text: "--°", text_font: font_temp_huge, text_color: 0xFFFFFF }
+
+        # ====================================================================
+        # JOBB PANEL - GLASS MORPHISM (uveg hatas)
+        # ====================================================================
+        # Outer glow / soft border halo
+        - obj:
+            x: 458
+            y: 14
+            width: 280
+            height: 304
+            bg_color: 0x00E5FF
+            bg_opa: 8%
+            border_width: 0
+            radius: 22
+        # Main glass panel (border = cyan glow, NINCS kilogo felso vonal)
+        - obj:
+            x: 460
+            y: 16
+            width: 275
+            height: 300
+            bg_color: 0x0A1428
+            bg_grad_color: 0x081020
+            bg_grad_dir: VER
+            bg_opa: 55%
+            border_width: 1
+            border_color: 0x3A6090
+            radius: 20
+            pad_all: 0
+            widgets:
+              # --- Cim ---
+              - label: { x: 18, y: 14, text: "RESZLETEK", text_font: font_xs, text_color: 0xCCEEFF, text_letter_space: 6 }
+
+              # --- Sor 1: Napkelte ---
+              - label: { x: 18, y: 40, text: "\U000F05B3", text_font: icons_md, text_color: $color_accent_amber }
+              - label: { x: 52, y: 40, text: "Napkelte", text_font: font_md, text_color: 0xAABBCC, text_letter_space: 1 }
+              - label: { id: ui_fc_sunrise, x: 175, y: 40, text: "--:--", text_font: font_mono_lg, text_color: $color_accent_amber }
+              - obj: { x: 18, y: 70, width: 239, height: 1, bg_color: 0x00E5FF, bg_opa: 12%, border_width: 0 }
+
+              # --- Sor 2: Naplemente ---
+              - label: { x: 18, y: 78, text: "\U000F05B2", text_font: icons_md, text_color: $color_accent_purple }
+              - label: { x: 52, y: 78, text: "Naplemente", text_font: font_md, text_color: 0xAABBCC, text_letter_space: 1 }
+              - label: { id: ui_fc_sunset, x: 175, y: 78, text: "--:--", text_font: font_mono_lg, text_color: $color_accent_purple }
+              - obj: { x: 18, y: 108, width: 239, height: 1, bg_color: 0x00E5FF, bg_opa: 12%, border_width: 0 }
+
+              # --- Sor 3: Paratartalom ---
+              - label: { x: 18, y: 116, text: "\U000F058E", text_font: icons_md, text_color: $color_accent_blue }
+              - label: { x: 52, y: 116, text: "Paratartalom", text_font: font_md, text_color: 0xAABBCC, text_letter_space: 1 }
+              - label: { id: ui_fc_current_hum, x: 195, y: 116, text: "--%", text_font: font_mono_lg, text_color: $color_accent_blue }
+              - obj: { x: 18, y: 146, width: 239, height: 1, bg_color: 0x00E5FF, bg_opa: 12%, border_width: 0 }
+
+              # --- Sor 4: Szel ---
+              - label: { x: 18, y: 154, text: "\U000F059D", text_font: icons_md, text_color: 0xFFFFFF }
+              - label: { x: 52, y: 154, text: "Szel", text_font: font_md, text_color: 0xAABBCC, text_letter_space: 1 }
+              - label: { id: ui_fc_current_wind, x: 145, y: 154, text: "--", text_font: font_mono_lg, text_color: 0xFFFFFF }
+              - label: { x: 195, y: 160, text: "km/h", text_font: font_sm, text_color: 0x8AABCC }
+              - obj: { x: 18, y: 184, width: 239, height: 1, bg_color: 0x00E5FF, bg_opa: 12%, border_width: 0 }
+
+              # --- Sor 5: Nyomas ---
+              - label: { x: 18, y: 192, text: "\U000F029C", text_font: icons_md, text_color: $color_accent_green }
+              - label: { x: 52, y: 192, text: "Nyomas", text_font: font_md, text_color: 0xAABBCC, text_letter_space: 1 }
+              - label: { id: ui_fc_current_press, x: 155, y: 192, text: "----", text_font: font_mono_lg, text_color: $color_accent_green }
+              - label: { x: 215, y: 198, text: "mb", text_font: font_sm, text_color: 0x8AABCC }
+
+              # --- Also szovegek (halvany) ---
+              - obj: { x: 18, y: 232, width: 239, height: 1, bg_color: 0x00E5FF, bg_opa: 10%, border_width: 0 }
+              - label: { x: 18, y: 244, text: "\U000F015F", text_font: icons_sm, text_color: 0x4080A0 }
+              - label: { x: 42, y: 246, text: "PirateWeather API", text_font: font_xs, text_color: 0x6090B0, text_letter_space: 2 }
+              - label: { x: 18, y: 270, text: "Erintsd a hatteret a bezarashoz", text_font: font_xs, text_color: 0x405070, text_letter_space: 1 }
+
+        # ====================================================================
+        # ALSO SAV - 5 napos elorejelzes GLASS kartyakkal
+        # Konteneren belul: 5×130 + 4×10 = 690 + 2×35 margo = 760 ✓
+        # Kartya x pozicioi: 35, 175, 315, 455, 595
+        # ====================================================================
+        - obj:
+            x: 20
+            y: 322
+            width: 760
+            height: 148
+            bg_color: 0x0A1428
+            bg_grad_color: 0x040812
+            bg_grad_dir: VER
+            bg_opa: 50%
+            border_width: 1
+            border_color: 0x3A6090
+            radius: 16
+            pad_all: 0
+            widgets:
+              # ===== NAP 1 - MAI (kiemelt: cyan glow + erosebb hatter) =====
+              - obj: { x: 35, y: 8, width: 130, height: 132, bg_color: 0x103048, bg_grad_color: 0x081828, bg_grad_dir: VER, bg_opa: 65%, border_width: 1, border_color: 0x00E5FF, radius: 14 }
+              # MA badge
+              - obj: { x: 80, y: 0, width: 40, height: 16, bg_color: 0x00E5FF, bg_opa: COVER, border_width: 0, radius: 8 }
+              - label: { x: 89, y: 1, text: "MA", text_font: font_xs, text_color: 0x000000, text_letter_space: 3 }
+              - image: { id: fc_img_d1, src: img_sm_partlycloudy, x: 75, y: 22 }
+              - label: { id: fc_temp_d1, x: 40, y: 78, width: 60, text: "--°", text_font: font_lg, text_color: 0xFFFFFF, text_align: CENTER }
+              - label: { id: fc_temp_min_d1, x: 100, y: 84, width: 60, text: "--°", text_font: font_sm, text_color: 0x6090B0, text_align: LEFT }
+              - label: { id: fc_day_d1, x: 35, y: 110, width: 130, text: "--", text_font: font_md, text_color: 0x00E5FF, text_align: CENTER, text_letter_space: 2 }
+
+              # ===== NAP 2 =====
+              - obj: { x: 175, y: 8, width: 130, height: 132, bg_color: 0x0E1C34, bg_grad_color: 0x081020, bg_grad_dir: VER, bg_opa: 50%, border_width: 1, border_color: 0x2A4870, radius: 14 }
+              - image: { id: fc_img_d2, src: img_sm_partlycloudy, x: 215, y: 22 }
+              - label: { id: fc_temp_d2, x: 180, y: 78, width: 60, text: "--°", text_font: font_lg, text_color: 0xFFFFFF, text_align: CENTER }
+              - label: { id: fc_temp_min_d2, x: 240, y: 84, width: 60, text: "--°", text_font: font_sm, text_color: 0x6090B0, text_align: LEFT }
+              - label: { id: fc_day_d2, x: 175, y: 110, width: 130, text: "--", text_font: font_md, text_color: 0xAACCEE, text_align: CENTER, text_letter_space: 2 }
+
+              # ===== NAP 3 =====
+              - obj: { x: 315, y: 8, width: 130, height: 132, bg_color: 0x0E1C34, bg_grad_color: 0x081020, bg_grad_dir: VER, bg_opa: 50%, border_width: 1, border_color: 0x2A4870, radius: 14 }
+              - image: { id: fc_img_d3, src: img_sm_partlycloudy, x: 355, y: 22 }
+              - label: { id: fc_temp_d3, x: 320, y: 78, width: 60, text: "--°", text_font: font_lg, text_color: 0xFFFFFF, text_align: CENTER }
+              - label: { id: fc_temp_min_d3, x: 380, y: 84, width: 60, text: "--°", text_font: font_sm, text_color: 0x6090B0, text_align: LEFT }
+              - label: { id: fc_day_d3, x: 315, y: 110, width: 130, text: "--", text_font: font_md, text_color: 0xAACCEE, text_align: CENTER, text_letter_space: 2 }
+
+              # ===== NAP 4 =====
+              - obj: { x: 455, y: 8, width: 130, height: 132, bg_color: 0x0E1C34, bg_grad_color: 0x081020, bg_grad_dir: VER, bg_opa: 50%, border_width: 1, border_color: 0x2A4870, radius: 14 }
+              - image: { id: fc_img_d4, src: img_sm_partlycloudy, x: 495, y: 22 }
+              - label: { id: fc_temp_d4, x: 460, y: 78, width: 60, text: "--°", text_font: font_lg, text_color: 0xFFFFFF, text_align: CENTER }
+              - label: { id: fc_temp_min_d4, x: 520, y: 84, width: 60, text: "--°", text_font: font_sm, text_color: 0x6090B0, text_align: LEFT }
+              - label: { id: fc_day_d4, x: 455, y: 110, width: 130, text: "--", text_font: font_md, text_color: 0xAACCEE, text_align: CENTER, text_letter_space: 2 }
+
+              # ===== NAP 5 =====
+              - obj: { x: 595, y: 8, width: 130, height: 132, bg_color: 0x0E1C34, bg_grad_color: 0x081020, bg_grad_dir: VER, bg_opa: 50%, border_width: 1, border_color: 0x2A4870, radius: 14 }
+              - image: { id: fc_img_d5, src: img_sm_partlycloudy, x: 635, y: 22 }
+              - label: { id: fc_temp_d5, x: 600, y: 78, width: 60, text: "--°", text_font: font_lg, text_color: 0xFFFFFF, text_align: CENTER }
+              - label: { id: fc_temp_min_d5, x: 660, y: 84, width: 60, text: "--°", text_font: font_sm, text_color: 0x6090B0, text_align: LEFT }
+              - label: { id: fc_day_d5, x: 595, y: 110, width: 130, text: "--", text_font: font_md, text_color: 0xAACCEE, text_align: CENTER, text_letter_space: 2 }

@@ -1,0 +1,17 @@
+# Titkos adatok - SOHA ne kerüljön fel!
+secrets.yaml
+
+# ESPHome build artifactok
+.esphome/
+*.bin
+
+# macOS
+.DS_Store
+
+# Szerkesztő
+.vscode/
+.idea/
+*.swp
+
+# Claude Code lokális fájlok
+.claude/

@@ -1,0 +1,415 @@
+# =============================================================================
+# dashboard_43/lights.yaml
+# -----------------------------------------------------------------------------
+# LAMPAK OLDAL (page_lights) - tab bar 4. index
+# -----------------------------------------------------------------------------
+# Tartalom:
+#   - Felso sav (4 db scene gomb): ALJZAT (nappali okos aljzat), KAPU,
+#                                   YEELIGHT, NEOPIXEL
+#   - 10 db lampa gomb 2 sorba rendezve (nappali, konyha, furdo, gyermek
+#     szobak, lepcsohaz, eloszobak, fenti furdo)
+#   - "MIND KI" gomb a jobb felso sarokban (osszes lampa OFF egy klikkre)
+#
+# Allapot szinkronizalas: binary_sensor + light entitasok HA-bol, az
+# `update_light_ui` script frissiti az ikonokat es felirat allapotokat.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# UPDATE_LIGHT_UI - kozos script a 10 lampa UI frissitesehez
+# -----------------------------------------------------------------------------
+# Paramterek:
+#   idx:   lampa index (0-9: nappali, konyha, furdo, ilka, kincso, balazs,
+#          lenti_elo, lepcso, fenti_elo, fenti_furdo)
+#   state: BE/KI allapot
+#
+# Mukodes:
+#   1. Btn checked allapot frissitese (vizuális press)
+#   2. Pill ("BE"/"KI") felirat + szin frissites (sárga vagy szurke)
+#   3. Icon szin frissites (sarga vagy szurke)
+#   4. Bar (lampa eros megjelenites) ertekek frissites (100 vagy 0)
+#
+# A binary_sensor entitasok kozvetlenul hivjak ezt (toggle-ra reagalas helyett).
+
+# -----------------------------------------------------------------------------
+# GLOBALIS ALLAPOTOK - furdoszoba ket kapcsolojanak kovetese
+# -----------------------------------------------------------------------------
+# A furdoszobaban KET lampa van egy gomb alatt (switch1 + switch2). A gomb
+# mindkettot kapcsolja, de az allapotot kulon-kulon kell kovetni, mert ha
+# valaki manualisan csak az egyiket kapcsolja, a panel akkor is helyesen
+# mutassa BE-t (OR logika: barmelyik bekapcsolva -> BE).
+globals:
+  - id: furdo_sw1_state
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: furdo_sw2_state
+    type: bool
+    restore_value: false
+    initial_value: "false"
+
+script:
+  - id: update_light_ui
+    parameters:
+      idx: int
+      state: bool
+    then:
+      - lambda: |-
+          lv_obj_t* btns[]  = {id(btn_light_nappali), id(btn_light_konyha), id(btn_light_furdo), id(btn_light_ilka), id(btn_light_kincso), id(btn_light_balazs), id(btn_light_lenti_elo), id(btn_light_lepcso), id(btn_light_fenti_elo), id(btn_light_fenti_furdo)};
+          lv_obj_t* pills[] = {id(pill_light_nappali), id(pill_light_konyha), id(pill_light_furdo), id(pill_light_ilka), id(pill_light_kincso), id(pill_light_balazs), id(pill_light_lenti_elo), id(pill_light_lepcso), id(pill_light_fenti_elo), id(pill_light_fenti_furdo)};
+          lv_obj_t* icons[] = {id(icon_light_nappali), id(icon_light_konyha), id(icon_light_furdo), id(icon_light_ilka), id(icon_light_kincso), id(icon_light_balazs), id(icon_light_lenti_elo), id(icon_light_lepcso), id(icon_light_fenti_elo), id(icon_light_fenti_furdo)};
+          lv_obj_t* bars[]  = {id(bar_light_nappali), id(bar_light_konyha), id(bar_light_furdo), id(bar_light_ilka), id(bar_light_kincso), id(bar_light_balazs), id(bar_light_lenti_elo), id(bar_light_lepcso), id(bar_light_fenti_elo), id(bar_light_fenti_furdo)};
+          if (idx < 0 || idx > 9) return;
+          if (state) lv_obj_add_state(btns[idx], LV_STATE_CHECKED);
+          else lv_obj_clear_state(btns[idx], LV_STATE_CHECKED);
+          lv_color_t c = state ? lv_color_hex(0xFFD600) : lv_color_hex(0x5A6080);
+          lv_label_set_text(pills[idx], state ? "BE" : "KI");
+          lv_obj_set_style_text_color(pills[idx], c, 0);
+          lv_obj_set_style_text_color(icons[idx], c, 0);
+          lv_bar_set_value(bars[idx], state ? 100 : 0, LV_ANIM_OFF);
+
+# -----------------------------------------------------------------------------
+# HA SZINKRONIZACIO - lampa allapot kovetes
+# -----------------------------------------------------------------------------
+# Minden lampahoz egy binary_sensor (HA-bol), amelynek on_state-je az
+# update_light_ui scriptet hivja a megfelelo `idx`-szel.
+# Igy ha valaki a HA-bol kapcsolja (vagy fizikai kapcsoloval), a panel
+# UI azonnal kovet.
+binary_sensor:
+  - platform: homeassistant
+    id: light_living
+    entity_id: "${entity_light_living}"
+    on_state:
+      then:
+        - script.execute: { id: update_light_ui, idx: 0, state: !lambda 'return x;' }
+  - platform: homeassistant
+    id: light_kitchen
+    entity_id: "${entity_light_kitchen}"
+    on_state:
+      then:
+        - script.execute: { id: update_light_ui, idx: 1, state: !lambda 'return x;' }
+  # --- FURDO: ket kapcsolo (switch1 + switch2) - OR logikaval kovetve ---
+  # Mindket szenzor a sajat globaljat frissiti, majd a kombinalt (OR) allapottal
+  # hivja az update_light_ui-t. Igy a panel BE-t mutat ha barmelyik aktiv.
+  - platform: homeassistant
+    id: light_furdo
+    entity_id: "${entity_light_furdo}"
+    on_state:
+      then:
+        - lambda: 'id(furdo_sw1_state) = x;'
+        - script.execute: { id: update_light_ui, idx: 2, state: !lambda 'return id(furdo_sw1_state) || id(furdo_sw2_state);' }
+  - platform: homeassistant
+    id: light_furdo2
+    entity_id: "${entity_light_furdo2}"
+    on_state:
+      then:
+        - lambda: 'id(furdo_sw2_state) = x;'
+        - script.execute: { id: update_light_ui, idx: 2, state: !lambda 'return id(furdo_sw1_state) || id(furdo_sw2_state);' }
+  - platform: homeassistant
+    id: light_ilka
+    entity_id: "${entity_light_ilka}"
+    on_state:
+      then:
+        - script.execute: { id: update_light_ui, idx: 3, state: !lambda 'return x;' }
+  - platform: homeassistant
+    id: light_kincso
+    entity_id: "${entity_light_kincso}"
+    on_state:
+      then:
+        - script.execute: { id: update_light_ui, idx: 4, state: !lambda 'return x;' }
+  - platform: homeassistant
+    id: light_balazs
+    entity_id: "${entity_light_balazs}"
+    on_state:
+      then:
+        - script.execute: { id: update_light_ui, idx: 5, state: !lambda 'return x;' }
+  - platform: homeassistant
+    id: light_lenti_elo
+    entity_id: "${entity_light_lenti_elo}"
+    on_state:
+      then:
+        - script.execute: { id: update_light_ui, idx: 6, state: !lambda 'return x;' }
+  - platform: homeassistant
+    id: light_lepcso
+    entity_id: "${entity_light_lepcso}"
+    on_state:
+      then:
+        - script.execute: { id: update_light_ui, idx: 7, state: !lambda 'return x;' }
+  - platform: homeassistant
+    id: light_fenti_elo
+    entity_id: "${entity_light_fenti_elo}"
+    on_state:
+      then:
+        - script.execute: { id: update_light_ui, idx: 8, state: !lambda 'return x;' }
+  - platform: homeassistant
+    id: light_fenti_furdo
+    entity_id: "${entity_light_fenti_furdo}"
+    on_state:
+      then:
+        - script.execute: { id: update_light_ui, idx: 9, state: !lambda 'return x;' }
+  - platform: homeassistant
+    id: nappali_aljzat
+    entity_id: "${entity_nappali_aljzat}"
+    on_state:
+      then:
+        - lvgl.label.update: { id: lbl_scene_aljzat, text_color: !lambda 'return x ? lv_color_hex(0xFFB800) : lv_color_hex(0x5A6080);' }
+        - lvgl.label.update: { id: icon_scene_aljzat, text_color: !lambda 'return x ? lv_color_hex(0xFFB800) : lv_color_hex(0x5A6080);' }
+  - platform: homeassistant
+    id: scene_yeelight
+    entity_id: "${entity_scene_yeelight}"
+    on_state:
+      then:
+        - lvgl.label.update: { id: lbl_scene_yeelight, text_color: !lambda 'return x ? lv_color_hex(0xFFB800) : lv_color_hex(0x5A6080);' }
+        - lvgl.label.update: { id: icon_scene_yeelight, text_color: !lambda 'return x ? lv_color_hex(0xFFB800) : lv_color_hex(0x5A6080);' }
+  - platform: homeassistant
+    id: scene_neopixel
+    entity_id: "${entity_scene_neopixel}"
+    on_state:
+      then:
+        - lvgl.label.update: { id: lbl_scene_neopixel, text_color: !lambda 'return x ? lv_color_hex(0xFF4488) : lv_color_hex(0x5A6080);' }
+        - lvgl.label.update: { id: icon_scene_neopixel, text_color: !lambda 'return x ? lv_color_hex(0xFF4488) : lv_color_hex(0x5A6080);' }
+  - platform: homeassistant
+    id: kapu_allapot
+    entity_id: "${entity_kapu_allapot}"
+    on_state:
+      then:
+        - lvgl.label.update: { id: lbl_scene_kapu, text: !lambda 'return std::string(x ? "NYITVA" : "CSUKVA");', text_color: !lambda 'return x ? lv_color_hex(0xFF4444) : lv_color_hex(0x00FF88);' }
+        - lvgl.label.update: { id: icon_scene_kapu, text_color: !lambda 'return x ? lv_color_hex(0xFF4444) : lv_color_hex(0x00FF88);' }
+        - if:
+            condition: { lambda: 'return x;' }
+            then:
+              # KAPU KINYITVA - sticky ertesito (nem tunik el)
+              - script.execute:
+                  id: show_notification
+                  message: "KAPU NYITVA"
+                  icon: "\U000F081A"
+                  color: 0xFFD600
+                  sticky: true
+            else:
+              # KAPU BEZARULT - eltunteti az ertesitot
+              - if:
+                  condition: { lambda: 'return id(notify_sticky);' }
+                  then:
+                    - script.execute: hide_notification
+
+# =============================================================================
+# UI - PAGE_LIGHTS (lampak vezerlese)
+# =============================================================================
+lvgl:
+  pages:
+    - id: page_lights
+      bg_color: $color_bg
+      widgets:
+        - image: { src: bg_home_img, x: 0, y: 0 }
+        # --- Felso sav: 4 scene/utility gomb (ALJZAT, KAPU, YEELIGHT, NEOPIXEL) ---
+        - button:
+            id: btn_scene_normal
+            x: 16
+            y: 16
+            width: 144
+            height: 60
+            styles: style_light_card
+            on_click:
+              - homeassistant.service: { service: switch.toggle, data: { entity_id: "${entity_nappali_aljzat}" } }
+            widgets:
+              - label: { id: icon_scene_aljzat, align: TOP_MID, y: 10, text: "\U000F06A5", text_font: icons_sm, text_color: $color_subtle }
+              - label: { id: lbl_scene_aljzat, align: BOTTOM_MID, y: -10, text: "ALJZAT", text_font: font_xs, text_color: $color_subtle }
+        - button:
+            id: btn_kapu
+            x: 172
+            y: 16
+            width: 144
+            height: 60
+            styles: style_light_card
+            on_click:
+              - homeassistant.service: { service: light.toggle, data: { entity_id: "${entity_kapu_toggle}" } }
+            widgets:
+              - label: { id: icon_scene_kapu, align: TOP_MID, y: 10, text: "\U000F081A", text_font: icons_sm, text_color: $color_subtle }
+              - label: { id: lbl_scene_kapu, align: BOTTOM_MID, y: -10, text: "KAPU", text_font: font_xs, text_color: $color_subtle }
+        - button:
+            id: btn_neopixel
+            x: 328
+            y: 16
+            width: 144
+            height: 60
+            styles: style_light_card
+            on_click:
+              - homeassistant.service: { service: light.toggle, data: { entity_id: "${entity_scene_neopixel}" } }
+            widgets:
+              - label: { id: icon_scene_neopixel, align: TOP_MID, y: 10, text: "\U000F0238", text_font: icons_sm, text_color: $color_subtle }
+              - label: { id: lbl_scene_neopixel, align: BOTTOM_MID, y: -10, text: "NEOPIXEL", text_font: font_xs, text_color: $color_subtle }
+        - button:
+            id: btn_yeelight
+            x: 484
+            y: 16
+            width: 144
+            height: 60
+            styles: style_light_card
+            on_click:
+              - homeassistant.service: { service: light.toggle, data: { entity_id: "${entity_scene_yeelight}" } }
+            widgets:
+              - label: { id: icon_scene_yeelight, align: TOP_MID, y: 10, text: "\U000F0F5F", text_font: icons_sm, text_color: $color_subtle }
+              - label: { id: lbl_scene_yeelight, align: BOTTOM_MID, y: -10, text: "YEELIGHT", text_font: font_xs, text_color: $color_subtle }
+        - button:
+            id: btn_scene_alloff
+            x: 640
+            y: 16
+            width: 144
+            height: 60
+            styles: style_card
+            on_click:
+              # Egyetlen parancs: az OSSZES light entitas kikapcsolasa.
+              # A hattervilagitas switch (nem light), igy ezt NEM erinti.
+              - homeassistant.service: { service: light.turn_off, data: { entity_id: all } }
+            widgets:
+              - label: { align: TOP_MID, y: 10, text: "\U000F0425", text_font: icons_sm, text_color: $color_subtle }
+              - label: { align: BOTTOM_MID, y: -10, text: "MIND KI", text_font: font_xs, text_color: $color_subtle }
+        - button:
+            id: btn_light_nappali
+            x: 16
+            y: 92
+            width: 144
+            height: 140
+            checkable: true
+            styles: style_light_card
+            on_click:
+              - homeassistant.service: { service: light.toggle, data: { entity_id: "${entity_light_living}" } }
+            widgets:
+              - label: { id: icon_light_nappali, x: 12, y: 12, text: "\U000F06B5", text_font: icons_md, text_color: $color_subtle }
+              - obj: { x: 96, y: 12, width: 38, height: 20, bg_color: 0x1E2235, radius: 10, widgets: [ label: { id: pill_light_nappali, align: CENTER, text: "KI", text_font: font_xs, text_color: $color_subtle } ] }
+              - label: { align: BOTTOM_LEFT, x: 12, y: -40, text: "Nappali", text_font: font_md, text_color: 0xFFFFFF }
+              - bar: { id: bar_light_nappali, align: BOTTOM_MID, y: -16, width: 120, height: 4, bg_color: 0x1E2235, indicator: { bg_color: $color_accent_orange } }
+        - button:
+            id: btn_light_konyha
+            x: 172
+            y: 92
+            width: 144
+            height: 140
+            checkable: true
+            styles: style_light_card
+            on_click:
+              - homeassistant.service: { service: light.toggle, data: { entity_id: "${entity_light_kitchen}" } }
+            widgets:
+              - label: { id: icon_light_konyha, x: 12, y: 12, text: "\U000F0335", text_font: icons_md, text_color: $color_subtle }
+              - obj: { x: 96, y: 12, width: 38, height: 20, bg_color: 0x1E2235, radius: 10, widgets: [ label: { id: pill_light_konyha, align: CENTER, text: "KI", text_font: font_xs, text_color: $color_subtle } ] }
+              - label: { align: BOTTOM_LEFT, x: 12, y: -40, text: "Konyha", text_font: font_md, text_color: 0xFFFFFF }
+              - bar: { id: bar_light_konyha, align: BOTTOM_MID, y: -16, width: 120, height: 4, bg_color: 0x1E2235, indicator: { bg_color: $color_accent_orange } }
+        - button:
+            id: btn_light_furdo
+            x: 328
+            y: 92
+            width: 144
+            height: 140
+            checkable: true
+            styles: style_light_card
+            on_click:
+              - homeassistant.service: { service: light.toggle, data: { entity_id: "${entity_light_furdo_toggle}" } }
+            widgets:
+              - label: { id: icon_light_furdo, x: 12, y: 12, text: "\U000F0335", text_font: icons_md, text_color: $color_subtle }
+              - obj: { x: 96, y: 12, width: 38, height: 20, bg_color: 0x1E2235, radius: 10, widgets: [ label: { id: pill_light_furdo, align: CENTER, text: "KI", text_font: font_xs, text_color: $color_subtle } ] }
+              - label: { align: BOTTOM_LEFT, x: 12, y: -40, text: "Furdoszoba", text_font: font_md, text_color: 0xFFFFFF }
+              - bar: { id: bar_light_furdo, align: BOTTOM_MID, y: -16, width: 120, height: 4, bg_color: 0x1E2235, indicator: { bg_color: $color_accent_orange } }
+        - button:
+            id: btn_light_lenti_elo
+            x: 484
+            y: 92
+            width: 144
+            height: 140
+            checkable: true
+            styles: style_light_card
+            on_click:
+              - homeassistant.service: { service: light.toggle, data: { entity_id: "${entity_light_lenti_elo}" } }
+            widgets:
+              - label: { id: icon_light_lenti_elo, x: 12, y: 12, text: "\U000F0335", text_font: icons_md, text_color: $color_subtle }
+              - obj: { x: 96, y: 12, width: 38, height: 20, bg_color: 0x1E2235, radius: 10, widgets: [ label: { id: pill_light_lenti_elo, align: CENTER, text: "KI", text_font: font_xs, text_color: $color_subtle } ] }
+              - label: { align: BOTTOM_LEFT, x: 12, y: -40, text: "Lenti elo.", text_font: font_md, text_color: 0xFFFFFF }
+              - bar: { id: bar_light_lenti_elo, align: BOTTOM_MID, y: -16, width: 120, height: 4, bg_color: 0x1E2235, indicator: { bg_color: $color_accent_orange } }
+        - button:
+            id: btn_light_lepcso
+            x: 640
+            y: 92
+            width: 144
+            height: 140
+            checkable: true
+            styles: style_light_card
+            on_click:
+              - homeassistant.service: { service: light.toggle, data: { entity_id: "${entity_light_lepcso}" } }
+            widgets:
+              - label: { id: icon_light_lepcso, x: 12, y: 12, text: "\U000F0335", text_font: icons_md, text_color: $color_subtle }
+              - obj: { x: 96, y: 12, width: 38, height: 20, bg_color: 0x1E2235, radius: 10, widgets: [ label: { id: pill_light_lepcso, align: CENTER, text: "KI", text_font: font_xs, text_color: $color_subtle } ] }
+              - label: { align: BOTTOM_LEFT, x: 12, y: -40, text: "Lepcsohaz", text_font: font_md, text_color: 0xFFFFFF }
+              - bar: { id: bar_light_lepcso, align: BOTTOM_MID, y: -16, width: 120, height: 4, bg_color: 0x1E2235, indicator: { bg_color: $color_accent_orange } }
+        - button:
+            id: btn_light_fenti_elo
+            x: 16
+            y: 248
+            width: 144
+            height: 140
+            checkable: true
+            styles: style_light_card
+            on_click:
+              - homeassistant.service: { service: light.toggle, data: { entity_id: "${entity_light_fenti_elo}" } }
+            widgets:
+              - label: { id: icon_light_fenti_elo, x: 12, y: 12, text: "\U000F0335", text_font: icons_md, text_color: $color_subtle }
+              - obj: { x: 96, y: 12, width: 38, height: 20, bg_color: 0x1E2235, radius: 10, widgets: [ label: { id: pill_light_fenti_elo, align: CENTER, text: "KI", text_font: font_xs, text_color: $color_subtle } ] }
+              - label: { align: BOTTOM_LEFT, x: 12, y: -40, text: "Fenti elo.", text_font: font_md, text_color: 0xFFFFFF }
+              - bar: { id: bar_light_fenti_elo, align: BOTTOM_MID, y: -16, width: 120, height: 4, bg_color: 0x1E2235, indicator: { bg_color: $color_accent_orange } }
+        - button:
+            id: btn_light_ilka
+            x: 172
+            y: 248
+            width: 144
+            height: 140
+            checkable: true
+            styles: style_light_card
+            on_click:
+              - homeassistant.service: { service: light.toggle, data: { entity_id: "${entity_light_ilka}" } }
+            widgets:
+              - label: { id: icon_light_ilka, x: 12, y: 12, text: "\U000F0335", text_font: icons_md, text_color: $color_subtle }
+              - obj: { x: 96, y: 12, width: 38, height: 20, bg_color: 0x1E2235, radius: 10, widgets: [ label: { id: pill_light_ilka, align: CENTER, text: "KI", text_font: font_xs, text_color: $color_subtle } ] }
+              - label: { align: BOTTOM_LEFT, x: 12, y: -40, text: "Ilka szoba", text_font: font_md, text_color: 0xFFFFFF }
+              - bar: { id: bar_light_ilka, align: BOTTOM_MID, y: -16, width: 120, height: 4, bg_color: 0x1E2235, indicator: { bg_color: $color_accent_orange } }
+        - button:
+            id: btn_light_kincso
+            x: 328
+            y: 248
+            width: 144
+            height: 140
+            checkable: true
+            styles: style_light_card
+            on_click:
+              - homeassistant.service: { service: light.toggle, data: { entity_id: "${entity_light_kincso}" } }
+            widgets:
+              - label: { id: icon_light_kincso, x: 12, y: 12, text: "\U000F0335", text_font: icons_md, text_color: $color_subtle }
+              - obj: { x: 96, y: 12, width: 38, height: 20, bg_color: 0x1E2235, radius: 10, widgets: [ label: { id: pill_light_kincso, align: CENTER, text: "KI", text_font: font_xs, text_color: $color_subtle } ] }
+              - label: { align: BOTTOM_LEFT, x: 12, y: -40, text: "Kincso sz.", text_font: font_md, text_color: 0xFFFFFF }
+              - bar: { id: bar_light_kincso, align: BOTTOM_MID, y: -16, width: 120, height: 4, bg_color: 0x1E2235, indicator: { bg_color: $color_accent_orange } }
+        - button:
+            id: btn_light_balazs
+            x: 484
+            y: 248
+            width: 144
+            height: 140
+            checkable: true
+            styles: style_light_card
+            on_click:
+              - homeassistant.service: { service: light.toggle, data: { entity_id: "${entity_light_balazs}" } }
+            widgets:
+              - label: { id: icon_light_balazs, x: 12, y: 12, text: "\U000F0335", text_font: icons_md, text_color: $color_subtle }
+              - obj: { x: 96, y: 12, width: 38, height: 20, bg_color: 0x1E2235, radius: 10, widgets: [ label: { id: pill_light_balazs, align: CENTER, text: "KI", text_font: font_xs, text_color: $color_subtle } ] }
+              - label: { align: BOTTOM_LEFT, x: 12, y: -40, text: "Balazs sz.", text_font: font_md, text_color: 0xFFFFFF }
+              - bar: { id: bar_light_balazs, align: BOTTOM_MID, y: -16, width: 120, height: 4, bg_color: 0x1E2235, indicator: { bg_color: $color_accent_orange } }
+        - button:
+            id: btn_light_fenti_furdo
+            x: 640
+            y: 248
+            width: 144
+            height: 140
+            checkable: true
+            styles: style_card
+            on_click:
+              - homeassistant.service: { service: light.toggle, data: { entity_id: "${entity_light_fenti_furdo}" } }
+            widgets:
+              - label: { id: icon_light_fenti_furdo, x: 12, y: 12, text: "\U000F0335", text_font: icons_md, text_color: $color_subtle }
+              - obj: { x: 96, y: 12, width: 38, height: 20, bg_color: 0x1E2235, radius: 10, widgets: [ label: { id: pill_light_fenti_furdo, align: CENTER, text: "KI", text_font: font_xs, text_color: $color_subtle } ] }
+              - label: { align: BOTTOM_LEFT, x: 12, y: -40, text: "Fenti furdo", text_font: font_md, text_color: 0xFFFFFF }
+              - bar: { id: bar_light_fenti_furdo, align: BOTTOM_MID, y: -16, width: 120, height: 4, bg_color: 0x1E2235, indicator: { bg_color: $color_accent_orange } }

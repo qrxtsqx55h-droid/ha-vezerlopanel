@@ -1,0 +1,119 @@
+# =============================================================================
+# dashboard_43/esphome-web-bac910.yaml
+# -----------------------------------------------------------------------------
+# FOBELEPESI PONT - ESPHome
+# -----------------------------------------------------------------------------
+# Hardware: Waveshare ESP32-S3 Touch LCD 4.3B (800x480 RGB IPS + GT911 touch)
+# Firmware: ESPHome + LVGL
+# Project:  Mikzone Boti HA Vezerlopanel
+#
+# Ez a fajl a teljes konfigot osszerakja: ESP32 hw, WiFi, OTA, API + a
+# dashboard_43/ mappabol az osszes modult `packages:` include-okkal.
+# =============================================================================
+
+substitutions:
+  name: esphome-web-bac910
+  friendly_name: ESP32-S3 Touch LCD 4.3B
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+
+  # ---------------------------------------------------------------------------
+  # PlatformIO opciok - PSRAM optimalizalas a kijelzo stabilitasahoz.
+  # ---------------------------------------------------------------------------
+  # A 800x480-as RGB display nagyon erzekeny a CPU/PSRAM timing-ra. Ezek
+  # nelkul a kep "remeg" / villog egyes scrollozasoknal.
+  platformio_options:
+    build_flags: "-DBOARD_HAS_PSRAM"
+    board_build.flash_mode: dio
+    board_upload.maximum_ram_size: 524288
+
+  # ---------------------------------------------------------------------------
+  # Boot szekvencia - a brand boot screen elindit.
+  # ---------------------------------------------------------------------------
+  # priority: -100 - varjuk meg amig minden komponens betoltodik (wifi,
+  # display, lvgl) mielott a sajat boot animaciot indjuk. A boot_sequence
+  # scriptet a core.yaml definialja.
+  on_boot:
+    priority: -100
+    then:
+      - script.execute: boot_sequence
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  flash_size: 8MB
+  framework:
+    type: esp-idf
+    # -------------------------------------------------------------------------
+    # SDK konfigok - KRITIKUS a kijelzo stabilitasahoz!
+    # -------------------------------------------------------------------------
+    # Ezek nelkul a kepernyon villogas/remegest tapasztalunk, mert a CPU
+    # nem tudja eleg gyorsan kiszolgalni a RGB display precize timingjat.
+    sdkconfig_options:
+      CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240: y   # 240 MHz CPU freq - max teljesitmeny
+      CONFIG_ESP32S3_DATA_CACHE_64KB: y        # 64KB adatcache - kevesebb PSRAM read
+      CONFIG_SPIRAM_FETCH_INSTRUCTIONS: y      # Instrukcio fetch PSRAM-bol
+      CONFIG_SPIRAM_RODATA: y                  # Read-only data PSRAM-bol
+
+# PSRAM 8MB octal mode, 80 MHz - max savszelesseg az LVGL framebufferhez.
+psram:
+  mode: octal
+  speed: 80MHz
+
+# -----------------------------------------------------------------------------
+# Logger - INFO szint, USB-CDC kikapcsolva
+# -----------------------------------------------------------------------------
+# A DEBUG szint tul sok CPU-t fogyaszt es villogast okoz a soros kimenetnel.
+# A baud_rate: 0 teljesen letiltja a soros logot - csak HA-n at lathatok.
+logger:
+  level: INFO
+  baud_rate: 0
+
+# HA API kapcsolat (encryption nelkul - LAN belul)
+api:
+
+# Over-the-Air frissites (ESPHome dashboard-bol)
+ota:
+  - platform: esphome
+
+# -----------------------------------------------------------------------------
+# WiFi - secrets.yaml-bol
+# -----------------------------------------------------------------------------
+# IMPORTANT: a power_save_mode: NONE kotelezo display-es eszkoznel,
+# mert a power save megszakitja az RGB clock-ot - villog a kep.
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  power_save_mode: NONE
+
+# -----------------------------------------------------------------------------
+# Modulok (dashboard_43/ mappabol)
+# -----------------------------------------------------------------------------
+# A `packages:` magic szo ossze fuzi az alabbi YAML fajlokat egyetlen konfigga.
+# A betoltesi sorrend NEM szamit (mert minden top-level kulcs uniquely merge-olodik),
+# de logikai csoportositast koveti:
+#   1. config    - entitas + szin substitutions (kozponti)
+#   2. core      - display, fontok, top_layer (notification, tab bar), boot screen
+#   3. home      - kezdooldal (ido, idojaras, indoor szenzorok)
+#   4. air       - levegominoseg oldal (SEN55)
+#   5. solar     - napenergia + EV oldal (Growatt + Dacia)
+#   6. radar     - jelenleterzekelo oldal (LD2410)
+#   7. lights    - lampak vezerles oldal (10 lampa + szcenak)
+#   8. heating   - futes/kazan oldal (termosztat)
+#   9. nightmode - ejszakai mod logika + carousel + konfig entitasok
+#   10. settings - beallitasok kepernyo UI (page_settings)
+#   11. forecast - 5 napos elorejelzes overlay
+packages:
+  config:    !include dashboard_43/_config.yaml
+  core:      !include dashboard_43/core.yaml
+  home:      !include dashboard_43/home.yaml
+  air:       !include dashboard_43/air_quality.yaml
+  solar:     !include dashboard_43/solar_ev.yaml
+  radar:     !include dashboard_43/radar.yaml
+  lights:    !include dashboard_43/lights.yaml
+  heating:   !include dashboard_43/heating.yaml
+  nightmode: !include dashboard_43/night_mode.yaml
+  settings:  !include dashboard_43/settings.yaml
+  forecast:  !include dashboard_43/forecast.yaml
