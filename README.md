@@ -9,6 +9,10 @@ Egy teljesen egyedi, fába épített okosotthon-vezérlő, ami egyetlen érintő
 ![Display](https://img.shields.io/badge/kijelző-800×480-orange)
 ![Nyelv](https://img.shields.io/badge/nyelv-magyar-red)
 
+<p align="center">
+  <img src="images/panel.jpg" alt="Mikzone Boti vezérlőpanel - kezdőlap" width="700">
+</p>
+
 ---
 
 ## 📸 Képernyők
