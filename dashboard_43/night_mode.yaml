@@ -281,6 +281,8 @@ script:
                         - script.execute: matrix_refresh
                       else:
                         - lvgl.page.show: page_night_amber
+                  # HATTERVILAGITAS KI - a kijelzo teljesen elsotetul ejszaka
+                  - switch.turn_off: lcd_backlight
           else:
             # Kikapcsolas: csak akkor valt vissza home-ra, ha NEM settings/forecast/normal oldalon vagyunk
             - if:
@@ -291,6 +293,8 @@ script:
                 then:
                   - lvgl.widget.show: main_tab_bar
                   - lvgl.page.show: page_home
+            # HATTERVILAGITAS BE - barmilyen oldalon is vagyunk (settings/forecast is)
+            - switch.turn_on: lcd_backlight
 
   # NOTE: a refresh_settings_ui script + a page_settings UI a settings.yaml-ba
   # lett kiszervezve (kulon modul a beallitasok kepernyojehez).
@@ -399,7 +403,11 @@ lvgl:
             bg_opa: TRANSP
             border_width: 0
             on_click:
-              - lambda: 'id(night_snooze) = true;'
+              - lambda: |-
+                  id(night_snooze) = true;
+                  id(is_night_active) = false;
+              # Ebresztes: hattervilagitas vissza BE (a sotet kepernyo felebred)
+              - switch.turn_on: lcd_backlight
               - if:
                   condition: { lambda: 'return id(night_mode_manual).state;' }
                   then: [ switch.turn_off: night_mode_manual ]
@@ -453,7 +461,11 @@ lvgl:
             bg_opa: TRANSP
             border_width: 0
             on_click:
-              - lambda: 'id(night_snooze) = true;'
+              - lambda: |-
+                  id(night_snooze) = true;
+                  id(is_night_active) = false;
+              # Ebresztes: hattervilagitas vissza BE (a sotet kepernyo felebred)
+              - switch.turn_on: lcd_backlight
               - if:
                   condition: { lambda: 'return id(night_mode_manual).state;' }
                   then: [ switch.turn_off: night_mode_manual ]

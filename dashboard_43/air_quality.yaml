@@ -32,8 +32,8 @@ sensor:
     entity_id: ${entity_aq_pm25}
     on_value:
       then:
-        - lvgl.label.update: { id: ui_pm25_val, text: !lambda 'return str_sprintf("%.1f", x);' }
-        - lvgl.bar.update: { id: ui_pm25_bar, value: !lambda 'return (int)std::min(100.0f, x * 4.0f);' }
+        - lvgl.label.update: { id: ui_pm25_val, text: !lambda 'return isnan(x) ? "--" : str_sprintf("%.1f", x);' }
+        - lvgl.bar.update: { id: ui_pm25_bar, value: !lambda 'return isnan(x) ? 0 : (int)std::min(100.0f, x * 4.0f);' }
         - if:
             condition: { lambda: 'return x > 50.0;' }
             then:
@@ -57,20 +57,21 @@ sensor:
     entity_id: ${entity_aq_pm10}
     on_value:
       then:
-        - lvgl.label.update: { id: ui_pm10_val, text: !lambda 'return str_sprintf("%.1f", x);' }
-        - lvgl.bar.update: { id: ui_pm10_bar, value: !lambda 'return (int)std::min(100.0f, x * 2.0f);' }
+        - lvgl.label.update: { id: ui_pm10_val, text: !lambda 'return isnan(x) ? "--" : str_sprintf("%.1f", x);' }
+        - lvgl.bar.update: { id: ui_pm10_bar, value: !lambda 'return isnan(x) ? 0 : (int)std::min(100.0f, x * 2.0f);' }
   - platform: homeassistant
     id: aq_voc
     entity_id: "${entity_aq_voc}"
     on_value:
       then:
-        - lvgl.label.update: { id: ui_voc_val, text: !lambda 'return str_sprintf("%.0f", x);' }
-        - lvgl.bar.update: { id: ui_voc_bar, value: !lambda 'return (int)std::min(100.0f, x / 5.0f);' }
-        - lvgl.label.update: { id: ui_aqi_main, text: !lambda 'return str_sprintf("%.0f", x);' }
-        - lvgl.arc.update: { id: ui_aqi_arc, value: !lambda 'return (int)std::min(100.0f, x / 5.0f);' }
+        - lvgl.label.update: { id: ui_voc_val, text: !lambda 'return isnan(x) ? "--" : str_sprintf("%.0f", x);' }
+        - lvgl.bar.update: { id: ui_voc_bar, value: !lambda 'return isnan(x) ? 0 : (int)std::min(100.0f, x / 5.0f);' }
+        - lvgl.label.update: { id: ui_aqi_main, text: !lambda 'return isnan(x) ? "--" : str_sprintf("%.0f", x);' }
+        - lvgl.arc.update: { id: ui_aqi_arc, value: !lambda 'return isnan(x) ? 0 : (int)std::min(100.0f, x / 5.0f);' }
         - lvgl.label.update:
             id: ui_aqi_status
             text: !lambda |-
+              if (isnan(x)) return std::string("- N/A -");
               if (x <= 50) return std::string("- KIVALO -");
               if (x <= 100) return std::string("- JO -");
               if (x <= 150) return std::string("- KOZEPES -");
@@ -78,6 +79,7 @@ sensor:
               if (x <= 300) return std::string("- NAGYON ROSSZ -");
               return std::string("- VESZELYES -");
             text_color: !lambda |-
+              if (isnan(x)) return lv_color_hex(0x5A6080);
               if (x <= 50) return lv_color_hex(0x00FF88);
               if (x <= 100) return lv_color_hex(0x00CC66);
               if (x <= 150) return lv_color_hex(0xFFD600);
@@ -88,6 +90,7 @@ sensor:
             id: ui_aqi_arc
             indicator:
               arc_color: !lambda |-
+                if (isnan(x)) return lv_color_hex(0x5A6080);
                 if (x <= 50) return lv_color_hex(0x00FF88);
                 if (x <= 100) return lv_color_hex(0x00CC66);
                 if (x <= 150) return lv_color_hex(0xFFD600);
@@ -99,22 +102,22 @@ sensor:
     entity_id: "${entity_aq_nox}"
     on_value:
       then:
-        - lvgl.label.update: { id: ui_nox_val, text: !lambda 'return str_sprintf("%.0f", x);' }
-        - lvgl.bar.update: { id: ui_nox_bar, value: !lambda 'return (int)std::min(100.0f, x / 5.0f);' }
+        - lvgl.label.update: { id: ui_nox_val, text: !lambda 'return isnan(x) ? "--" : str_sprintf("%.0f", x);' }
+        - lvgl.bar.update: { id: ui_nox_bar, value: !lambda 'return isnan(x) ? 0 : (int)std::min(100.0f, x / 5.0f);' }
   - platform: homeassistant
     id: aq_temp
     entity_id: "${entity_aq_temp}"
     on_value:
       then:
-        - lvgl.label.update: { id: ui_aqtemp_val, text: !lambda 'return str_sprintf("%.1f", x);' }
-        - lvgl.bar.update: { id: ui_aqtemp_bar, value: !lambda 'return (int)std::min(100.0f, std::max(0.0f, x * 3.33f));' }
+        - lvgl.label.update: { id: ui_aqtemp_val, text: !lambda 'return isnan(x) ? "--" : str_sprintf("%.1f", x);' }
+        - lvgl.bar.update: { id: ui_aqtemp_bar, value: !lambda 'return isnan(x) ? 0 : (int)std::min(100.0f, std::max(0.0f, x * 3.33f));' }
   - platform: homeassistant
     id: aq_hum
     entity_id: "${entity_aq_hum}"
     on_value:
       then:
-        - lvgl.label.update: { id: ui_aqhum_val, text: !lambda 'return str_sprintf("%.0f", x);' }
-        - lvgl.bar.update: { id: ui_aqhum_bar, value: !lambda 'return (int)x;' }
+        - lvgl.label.update: { id: ui_aqhum_val, text: !lambda 'return isnan(x) ? "--" : str_sprintf("%.0f", x);' }
+        - lvgl.bar.update: { id: ui_aqhum_bar, value: !lambda 'return isnan(x) ? 0 : (int)x;' }
 
 # =============================================================================
 # UI - PAGE_AIR (levegominoseg oldal)

@@ -323,16 +323,16 @@ lvgl:
         - label: { id: ui_fc_day_label, x: 28, y: 80, text: "Pentek", text_font: font_lg, text_color: $color_accent_blue, text_letter_space: 5 }
 
         # ====================================================================
-        # IDOJARAS IKON (x:165) + ALLAPOT/ERZET JOBBRA MELLETTE
+        # IDOJARAS IKON (kozep-jobb, a varos felirat ALATT) + ALLAPOT/ERZET ALATTA
         # ====================================================================
-        # Halo glow effekt az ikon mogott
-        - obj: { x: 175, y: 30, width: 130, height: 130, bg_color: 0x41BDF5, bg_opa: 8%, border_width: 0, radius: 65 }
-        - obj: { x: 190, y: 45, width: 100, height: 100, bg_color: 0x41BDF5, bg_opa: 12%, border_width: 0, radius: 50 }
-        - image: { id: ui_fc_current_icon, src: img_partlycloudy, x: 165, y: 20 }
+        # Halo glow effekt az ikon mogott (lejjebb tolva, hogy ne takarja a varos nevet)
+        - obj: { x: 292, y: 44, width: 130, height: 130, bg_color: 0x41BDF5, bg_opa: 8%, border_width: 0, radius: 65 }
+        - obj: { x: 307, y: 59, width: 100, height: 100, bg_color: 0x41BDF5, bg_opa: 12%, border_width: 0, radius: 50 }
+        - image: { id: ui_fc_current_icon, src: img_partlycloudy, x: 300, y: 52 }
 
-        # --- Esos + Erzet az ikon JOBB oldalan ---
-        - label: { id: ui_fc_current_state, x: 290, y: 60, width: 160, text: "Reszben felhos", text_font: font_lg, text_color: 0xFFFFFF, text_letter_space: 2 }
-        - label: { id: ui_fc_feels_like, x: 290, y: 95, width: 160, text: "Erzet: --°", text_font: font_md, text_color: 0x8AB0D0, text_letter_space: 1 }
+        # --- Felhos + Erzet az ikon ALATT, kozepre igazitva ---
+        - label: { id: ui_fc_current_state, x: 292, y: 172, width: 130, text: "Reszben felhos", text_font: font_lg, text_color: 0xFFFFFF, text_align: CENTER }
+        - label: { id: ui_fc_feels_like, x: 292, y: 200, width: 130, text: "Erzet: --°", text_font: font_md, text_color: 0x8AB0D0, text_align: CENTER }
 
         # ====================================================================
         # NAGY HOMERSEKLET (feljebb tolva, bal kozepe-also)
